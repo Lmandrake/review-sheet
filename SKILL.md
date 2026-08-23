@@ -54,6 +54,44 @@ begins" is not.
   have poisoned decisions made on them.
 * ✅ **"No mechanical effect — appearance only" is a real answer** and it changes calls.
 
+## 2b. 🔴 Your ranking criterion is probably not theirs — say so, and make disagreeing cheap
+
+**The most valuable thing a sheet produces is not the rows the human agreed with. It is the rows
+they overruled**, because those are where the machine's criterion and the human's differ — and you
+cannot find that out by thinking harder about the criterion.
+
+A measured case worth generalising. A sheet ranked 621 creature sprites for *art quality* using
+what was measurable: resolution, contrast, fill, saturation. The human reviewed it, overruled 8
+rows, and his notes showed he had been judging something else entirely:
+
+> *"Fascinating profile shape, so keep in and make smaller"* — weak art KEPT, for its outline.
+> *"terrestrial, not wanted"* — good art CUT, for being recognisably from Earth.
+> *"It's familiar outline is also a negative"* — familiarity itself as a defect.
+> *"I can't even see what this thing is"* — legibility, which no sharpness measure captures.
+
+The decisive row scored **2,850 px at contrast 0.30** — comfortably fine, pre-filled *keep*. He
+ruled *redraw*: **"So alien and bizarre I want to honor it."**
+
+🔑 **A metric can rank QUALITY. It cannot rank WORTH.** The sort order was still useful — it put
+the weakest art in front of him first — but it was never the decision, and a sheet that presents
+it as one collects agreement instead of judgement.
+
+**So build for the disagreement:**
+
+- ⭐ **Name your criterion in the page, in one line, next to the counts.** *"Ranked by sprite
+  resolution — which ranks quality, not worth."* A human who can see what you optimised can tell
+  you it was the wrong thing; one who cannot will assume you knew.
+- **Make the note field the most inviting control on the row**, not an afterthought beside the
+  dropdown. The 12 notes in that review were worth more than the 588 agreements, because each one
+  carried a criterion nobody had written down.
+- ⚠️ **Read the overrides as a GROUP before acting on them individually.** Eight scattered
+  disagreements looked like noise; read together they were one coherent rule the sheet did not
+  know. Row-by-row you implement eight exceptions and miss the rule.
+- 🔴 **Report the override rate back honestly, and let it change what you build next.** A sheet
+  with zero overrides has either nailed the criterion or failed to make disagreeing easy — and
+  **those two look identical in the output file.** Compare against your other sheets before
+  treating it as success.
+
 ## 3. Make the list tractable before asking for judgement
 
 * ⭐ **Show what actually occurs.** Of 449 world-map defs, only **144 appeared in the
