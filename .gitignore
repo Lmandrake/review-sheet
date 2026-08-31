@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+
+# demo/make_demo.py regenerates all of these deterministically in one command, so they
+# are outputs, not sources. The sprites alone are ~850 KB of generated PNG.
+demo/sheet.html
+demo/decisions.json
+demo/decisions.json.bak
+demo/sprites/
+demo/.broken_test_sheet.html

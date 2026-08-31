@@ -1,0 +1,1083 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Review sheet</title>
+
+<!--
+  sheet_template.html — a COMPLETE review sheet, not a fragment to copy hooks out of.
+
+  The chrome in here is the part humans complain about when it is missing: a brief that
+  folds AND is height-bounded, a save path that is present and copyable, and a group
+  label that follows while scrolling. An earlier version of this asset was a ~100-line
+  fragment that said "wire the three marked hooks", and agents rebuilt the chrome from
+  scratch and dropped one. So the chrome is no longer yours to author.
+
+  YOU FILL IN EXACTLY THREE THINGS:
+    1. <script id="CONFIG"  type="application/json">   the brief, posture, criterion, options
+    2. <script id="ITEMS"   type="application/json">   the rows
+    3. (optional) <script id="RENDER">                 window.itemBody = it => html
+                                                       — only if the default row is wrong
+
+  Everything else — persistence, keyboard, grid, undo, overrides, sticky labels — is done.
+  Run assets/check_sheet.py against your output before you hand it over.
+-->
+
+<style>
+/* ── palette ─────────────────────────────────────────────────────────────────────── */
+:root{
+  --bg:#0b0d10; --panel:#14161a; --panel2:#0f1216; --line:#2a2f37;
+  --ink:#e8e6e3; --dim:#98a2b3; --accent:#ffb454; --link:#cfe3ff;
+  --ok:#5ac37f; --warn:#e8b64c; --bad:#e06c6c; --info:#6aa6e8;
+  --rowh:84px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.45 ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+code,kbd{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+kbd{background:#1b2028;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;
+  padding:0 5px;font-size:11px;color:var(--link)}
+a{color:var(--link)}
+
+/* ── 1. THE HEADER, AND THE BRIEF THAT FOLDS *AND* IS BOUNDED ────────────────────────
+   Folding alone is not enough. A brief that is open and unbounded still eats the page —
+   that is the actual complaint ("the top instructions are persistent and block the
+   screen"). max-height turns the worst case from "the rows are off-screen" into "the
+   brief scrolls inside itself". Fold state persists, because re-collapsing it on every
+   visit is the same annoyance wearing a different hat. */
+header{position:sticky;top:0;z-index:30;background:var(--panel);border-bottom:1px solid var(--line)}
+.hrow{display:flex;align-items:center;gap:12px;padding:9px 18px;flex-wrap:wrap}
+.hrow h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.2px}
+.sub{color:var(--dim);font-size:12px}
+.spacer{margin-left:auto}
+#brief{max-height:26vh;overflow:auto;padding:0 18px 10px;border-top:1px solid #1e232b}
+body.folded #brief{display:none}
+@keyframes flash{0%,100%{box-shadow:none}35%{box-shadow:0 0 0 3px #3d6a92}}
+#fold.flash{animation:flash 1.1s ease-in-out 2}
+.panel{background:var(--panel2);border:1px solid var(--line);border-radius:6px;
+  padding:9px 12px;margin:8px 0;font-size:12.5px}
+.panel h3{margin:0 0 5px;font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim)}
+.panel.invented{border-color:#5a4320;background:#1a1408}
+.panel.invented h3{color:var(--warn)}
+.panel.posture{border-color:#2f4358;background:#0d151d}
+.crit{color:var(--accent);font-size:12px}
+
+/* buttons */
+.btn{cursor:pointer;background:#1b2028;border:1px solid var(--line);border-radius:5px;
+  padding:4px 10px;font-size:12px}
+.btn:hover{background:#232a34}
+.btn.pri{background:#1d2733;border-color:#2f4358;color:var(--link)}
+.btn.on{background:#243447;border-color:#3d6a92;color:#dff0ff}
+
+/* ── 2. THE SAVE PATH IS PRESENT AND COPYABLE ────────────────────────────────────────
+   Only a fallback now — with the sidecar there is no picker and no path to paste. It
+   stays because the sheet must still work opened straight off disk with nothing running. */
+.pathbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;background:var(--panel2);
+  border:1px solid var(--line);border-radius:6px;padding:8px 11px;margin:8px 0;font-size:12px}
+.pathbar code{color:var(--link);word-break:break-all}
+.pathbar b{color:var(--dim);font-weight:600}
+
+/* filter bar — OUTSIDE #brief, so folding the brief never hides the search box */
+.bar{display:flex;gap:8px;align-items:center;padding:8px 18px;flex-wrap:wrap;
+  background:#101317;border-top:1px solid #1e232b}
+.bar input[type=search],.bar select{background:var(--panel2);border:1px solid var(--line);
+  border-radius:5px;padding:5px 9px;font-size:12px}
+.bar input[type=search]{min-width:240px}
+.pill{font-size:11.5px;color:var(--dim);background:#0d1014;border:1px solid var(--line);
+  border-radius:999px;padding:3px 10px;white-space:nowrap}
+.pill b{color:var(--ink)}
+.pill.live{border-color:#2f4358;color:var(--link)}
+.pill.bad{border-color:#5a2b2b;color:#ffb0b0;background:#1a0e0e}
+
+/* ── 3. THE GROUP LABEL FOLLOWS WHILE SCROLLING ──────────────────────────────────────
+   `top` is set from the MEASURED header height at the end of every render and on resize:
+   the header changes height when the brief folds, and a hardcoded offset leaves labels
+   floating in mid-page or buried under the bar. */
+.gh{position:sticky;z-index:20;background:#10141a;border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line);padding:5px 18px;font-size:12px;font-weight:650;
+  color:var(--accent);display:flex;gap:10px;align-items:center}
+.gh.nostick{position:static}      /* groups of <=3: a sticky label covers the only row */
+.gh .ghcount{color:var(--dim);font-weight:400}
+.gh .ghbulk{margin-left:auto;display:flex;gap:5px}
+.gh .ghbulk button{font-size:11px;padding:2px 7px}
+
+/* ── rows ──────────────────────────────────────────────────────────────────────────── */
+#list{padding-bottom:60vh}         /* so the last group can still scroll under the header */
+.row{display:flex;gap:12px;align-items:flex-start;padding:9px 18px;
+  border-bottom:1px solid #171b21}
+body.perf .row{content-visibility:auto;contain-intrinsic-size:auto var(--rowh)}
+.row:hover{background:#0f1318}
+.row.focus{background:#131a24;box-shadow:inset 3px 0 0 var(--info)}
+.row.override{box-shadow:inset 3px 0 0 var(--accent)}
+.row.focus.override{box-shadow:inset 3px 0 0 var(--info),inset 6px 0 0 var(--accent)}
+
+.thumb{width:64px;height:64px;flex:0 0 64px;border-radius:5px;border:1px solid var(--line);
+  /* checkerboard: a sprite with transparency is unjudgeable on a flat dark field */
+  background-image:linear-gradient(45deg,#2a2f37 25%,transparent 25%,transparent 75%,#2a2f37 75%),
+                   linear-gradient(45deg,#2a2f37 25%,transparent 25%,transparent 75%,#2a2f37 75%);
+  background-size:12px 12px;background-position:0 0,6px 6px;background-color:#1a1d22;
+  display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:zoom-in}
+.thumb img{max-width:100%;max-height:100%;image-rendering:pixelated}
+.main{flex:1;min-width:0}
+.label{font-weight:600;font-size:13px;display:flex;gap:7px;align-items:baseline;flex-wrap:wrap}
+.label .id{color:#5f6b7a;font-size:11px;font-family:ui-monospace,monospace}
+/* the consequence line: what the entry DOES. Not its name. */
+.effect{color:#c3cad6;font-size:12.5px;margin-top:2px}
+.marks{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
+.mark{font-size:10.5px;border-radius:3px;padding:1px 6px;border:1px solid}
+.mark.inferred{color:var(--warn);border-color:#5a4320;background:#1a1408}
+.mark.contested{color:#e8a0d8;border-color:#5a2b52;background:#1a0d17}
+.mark.absent{color:var(--dim);border-color:var(--line)}
+.mark.ovr{color:var(--accent);border-color:#5a4320;background:#1a1408}
+
+.ctrl{flex:0 0 auto;display:flex;flex-direction:column;gap:5px;align-items:stretch;width:210px}
+.opts{display:flex;gap:4px}
+.opts button{flex:1;cursor:pointer;background:#161a20;border:1px solid var(--line);
+  border-radius:5px;padding:5px 4px;font-size:11.5px;color:var(--dim)}
+.opts button:hover{border-color:#3d4653;color:var(--ink)}
+.opts button.sel{color:#0b0d10;font-weight:700;border-color:transparent}
+/* the note must be the most inviting control on the row, not an afterthought beside the
+   dropdown: the notes are worth more than the agreements. */
+.note{width:100%;background:#0c1420;border:1px solid #2b3a4d;border-radius:5px;
+  padding:5px 8px;font-size:12px;min-height:30px;resize:vertical;color:#dff0ff}
+.note::placeholder{color:#5c7590}
+.note:focus{outline:2px solid #3d6a92;outline-offset:-1px;background:#0e1826}
+.row.override .note{border-color:#5a4320;background:#150f06}
+
+/* ── grid / contact-sheet mode ───────────────────────────────────────────────────────── */
+body.grid #list{display:grid;gap:10px;padding:12px 18px 60vh;
+  grid-template-columns:repeat(auto-fill,minmax(var(--cell,132px),1fr))}
+body.grid .gh{grid-column:1/-1;margin:6px -18px 0}
+body.grid .row{flex-direction:column;gap:6px;padding:7px;border:1px solid #1b2028;
+  border-radius:7px;background:#0f1216;align-items:stretch}
+body.grid.perf .row{contain-intrinsic-size:auto 190px}
+body.grid .thumb{width:100%;height:var(--cell,132px);flex:none}
+body.grid .ctrl{width:auto}
+body.grid .effect{font-size:11px;max-height:2.9em;overflow:hidden}
+body.grid .note{min-height:26px;font-size:11px}
+body.grid .row.sel-tint{border-color:currentColor}
+
+/* zoom overlay — judging a sprite at 64px is judging nothing */
+#zoom{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+  background:rgba(3,5,8,.86);cursor:zoom-out}
+#zoom.on{display:flex}
+#zoom .box{background-image:linear-gradient(45deg,#2a2f37 25%,transparent 25%,transparent 75%,#2a2f37 75%),
+                            linear-gradient(45deg,#2a2f37 25%,transparent 25%,transparent 75%,#2a2f37 75%);
+  background-size:24px 24px;background-position:0 0,12px 12px;background-color:#1a1d22;
+  border:1px solid var(--line);border-radius:8px;padding:14px}
+#zoom img{image-rendering:pixelated;max-width:70vw;max-height:70vh}
+#zoom .cap{text-align:center;color:var(--dim);font-size:12px;margin-top:8px}
+
+/* ── overrides digest ────────────────────────────────────────────────────────────────── */
+#digest{position:fixed;right:0;top:0;bottom:0;width:min(440px,92vw);z-index:50;
+  background:#0d1014;border-left:1px solid var(--line);display:none;flex-direction:column}
+#digest.on{display:flex}
+#digest .dh{padding:11px 14px;border-bottom:1px solid var(--line);display:flex;gap:9px;align-items:center}
+#digest .db{overflow:auto;padding:10px 14px;font-size:12.5px}
+#digest .item{border-left:2px solid var(--accent);padding:5px 0 7px 9px;margin-bottom:10px}
+#digest .item .t{font-weight:600}
+#digest .item .d{color:var(--dim);font-size:11.5px}
+#digest .item .n{color:#dff0ff;margin-top:3px}
+#digest .empty{color:var(--dim)}
+
+/* ── keymap legend ───────────────────────────────────────────────────────────────────── */
+#keys{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:60;display:none;
+  background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px 20px;
+  box-shadow:0 20px 60px rgba(0,0,0,.6);max-width:min(560px,92vw)}
+#keys.on{display:block}
+#keys table{border-collapse:collapse;font-size:12.5px}
+#keys td{padding:3px 12px 3px 0;vertical-align:top}
+#keys h3{margin:0 0 10px;font-size:13px}
+
+.banner{padding:8px 18px;font-size:12.5px;border-bottom:1px solid}
+.banner.bad{background:#1e0f0f;border-color:#5a2b2b;color:#ffc9c9}
+.banner.warn{background:#1c1608;border-color:#5a4320;color:#ffe2ac}
+.banner.ok{background:#0d1a12;border-color:#2b5a3b;color:#c9ffd9}
+.banner button{margin-left:8px}
+.hide{display:none !important}
+</style>
+</head>
+<body>
+
+<!-- ══ FILL IN #1 ═══════════════════════════════════════════════════════════════════ -->
+<script id="CONFIG" type="application/json">
+{
+  "sheetId": "demo_sheet",
+  "title": "Review sheet",
+  "subtitle": "",
+  "briefHtml": "<p>Replace this with the brief. State it IN the page: the sheet outlives the conversation, and six weeks later nobody remembers what \"serious tone\" meant.</p>",
+  "criterion": "",
+  "invented": [],
+  "posture": { "mode": "whitelist", "explain": "" },
+  "options": [
+    { "key": "keep", "label": "Keep",  "hotkey": "1", "color": "#5ac37f", "counts": "in" },
+    { "key": "cut",  "label": "Cut",   "hotkey": "2", "color": "#e06c6c", "counts": "out" }
+  ],
+  "groupLabel": "group",
+  "media": false,
+  "decisionsFile": "decisions.json",
+  "decisionsPath": "",
+  "sheetPath": ""
+}
+</script>
+
+<!-- ══ FILL IN #2 ═══════════════════════════════════════════════════════════════════ -->
+<script id="ITEMS" type="application/json">
+[]
+</script>
+
+<header>
+  <div class="hrow">
+    <h1 id="title">Review sheet</h1>
+    <span class="sub" id="subtitle"></span>
+    <span class="spacer"></span>
+    <span class="pill" id="link">connecting…</span>
+    <button class="btn" id="fold">▾ brief</button>
+  </div>
+
+  <div id="brief">
+    <div id="briefBody"></div>
+    <div class="panel posture" id="posturePanel"></div>
+    <div class="panel invented hide" id="inventedPanel"></div>
+    <div class="pathbar hide" id="pathbar">
+      <b>Save decisions to</b>
+      <code id="dpath"></code>
+      <button class="btn" data-copy="dpath">copy path</button>
+      <span class="sub" id="pathwhy"></span>
+    </div>
+    <div class="pathbar hide" id="spathbar">
+      <b>This sheet</b> <code id="spath"></code>
+      <button class="btn" data-copy="spath">copy path</button>
+    </div>
+  </div>
+
+  <div class="bar">
+    <input type="search" id="q" placeholder="search name, id, or effect…">
+    <select id="fstate"></select>
+    <select id="fgroup"></select>
+    <select id="fmark">
+      <option value="">all rows</option>
+      <option value="override">overrides only</option>
+      <option value="contested">contested only</option>
+      <option value="inferred">inferred only</option>
+      <option value="noted">has a note</option>
+    </select>
+    <span class="spacer"></span>
+    <span class="pill" id="progress"></span>
+    <button class="btn" id="nextUndecided" title="jump to the next undecided row (g)">next undecided</button>
+    <button class="btn" id="btnDigest" title="read the overrides as a group (o)">overrides <b id="ovrCount">0</b></button>
+    <button class="btn hide" id="btnGrid" title="list / grid (v)">grid</button>
+    <input type="range" id="cell" class="hide" min="80" max="260" value="132" title="thumbnail size">
+    <button class="btn" id="btnKeys" title="keyboard help (?)">?</button>
+  </div>
+
+  <div class="banner bad hide" id="err"></div>
+</header>
+
+<div id="list"></div>
+
+<div id="zoom"><div><div class="box"><img id="zimg" alt=""></div><div class="cap" id="zcap"></div></div></div>
+
+<div id="digest">
+  <div class="dh">
+    <b>Overrides</b><span class="sub" id="digestSub"></span>
+    <span class="spacer"></span>
+    <button class="btn" id="digestCopy">copy</button>
+    <button class="btn" id="digestClose">close</button>
+  </div>
+  <div class="db" id="digestBody"></div>
+</div>
+
+<div id="keys">
+  <h3>Keyboard</h3>
+  <table id="keysBody"></table>
+  <div class="sub" style="margin-top:10px">Esc closes. Keys are ignored while typing in a note.</div>
+</div>
+
+<!-- ══ FILL IN #3 (optional) ════════════════════════════════════════════════════════
+     Only if the default row is wrong for your items. The default already handles a
+     thumbnail, a consequence line, meta chips and the inferred/contested/absent marks.
+<script id="RENDER">
+  window.itemBody = it => `<div class="effect">${esc(it.effect)}</div>`;
+</script>
+-->
+
+<script>
+"use strict";
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   config + items
+   ───────────────────────────────────────────────────────────────────────────────────── */
+const CFG   = JSON.parse(document.getElementById('CONFIG').textContent);
+const ITEMS = JSON.parse(document.getElementById('ITEMS').textContent);
+const OPTS  = CFG.options || [];
+const OPTBY = Object.fromEntries(OPTS.map(o => [o.key, o]));
+const SIDECAR = window.__SIDECAR__ || null;
+
+/* Which capability packs are live. ?packs=keys,grid,perf,overrides overrides the default,
+   which exists so each one can be judged on its own before it earns a place. */
+const PACKS = (() => {
+  const all = { keys: true, grid: true, perf: true, overrides: true };
+  const p = new URLSearchParams(location.search).get('packs');
+  if (p === null) return all;
+  const on = new Set(p.split(',').map(s => s.trim()).filter(Boolean));
+  return Object.fromEntries(Object.keys(all).map(k => [k, on.has(k)]));
+})();
+
+const el   = id => document.getElementById(id);
+const esc  = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+window.esc = esc;
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   storage keys are NAMESPACED, and this is not decoration.
+
+   MEASURED: every file:// page shares ONE storage origin. A page in /tmp/a.html read a
+   key written by a page in /tmp/b/other.html — origin is literally "file://". So two
+   review sheets opened from disk share localStorage AND IndexedDB. An unnamespaced
+   'decisions' key means sheet B silently eats sheet A's review, and an unnamespaced
+   IndexedDB handle means sheet B auto-writes into sheet A's FILE while reporting "saved".
+   ───────────────────────────────────────────────────────────────────────────────────── */
+const NS = 'rs:' + (CFG.sheetId || 'unnamed') + ':';
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(NS + k); return v === null ? d : JSON.parse(v); }
+              catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(NS + k, JSON.stringify(v)); } catch (e) {} },
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   state
+   ───────────────────────────────────────────────────────────────────────────────────── */
+let DEC = {};                 // id -> {decision, note, prefill, at}
+let dirty = new Map();        // id -> decision object, pending flush
+const undoStack = [], redoStack = [];
+let focusIdx = -1, shown = [], backend = null, frozen = false;
+
+const prefillOf = it => (it.prefill ?? null);
+const decOf     = id => DEC[id] || null;
+const decisionOf = id => { const d = decOf(id); return d && d.decision ? d.decision : ''; };
+const isDecided = id => !!decisionOf(id);
+const isOverride = id => {
+  const d = decOf(id); if (!d) return false;
+  const pf = d.prefill ?? null;
+  return pf !== null && pf !== '' && d.decision !== pf;
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   persistence — three backends, one interface: load() and save(ops).
+
+   The server backend is the good one. It exists because moving the write out of the page
+   relocates the rules an agent has to remember (merge per row, keep unknown top-level
+   keys, refuse a truncating write, stamp provenance) into plumbing that enforces them.
+   ───────────────────────────────────────────────────────────────────────────────────── */
+class ServerBackend {
+  constructor(cfg) { this.cfg = cfg; this.name = 'sidecar'; this.writes = 0; }
+  async load() {
+    const r = await fetch('/decisions', { headers: { 'X-Sheet-Token': this.cfg.token } });
+    if (!r.ok) throw new Error('GET /decisions ' + r.status);
+    const doc = await r.json();
+    frozen = doc.frozen === true;
+    this.writes = doc.writeCount || 0;
+    return doc.decisions || {};
+  }
+  async save(ops) {
+    const r = await fetch('/decisions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Sheet-Token': this.cfg.token },
+      body: JSON.stringify({ ops }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (r.status === 423) { frozen = true; throw new Error('frozen: ' + (body.frozenMeaning || 'read-only')); }
+    if (r.status === 409) throw new Error(body.hint || 'refused a truncating write');
+    if (!r.ok) throw new Error(body.error || ('POST /decisions ' + r.status));
+    this.writes = body.writeCount;
+    return body;
+  }
+  get where() { return this.cfg.decisionsPath || CFG.decisionsFile; }
+}
+
+/* Fallback for a sheet opened straight off disk with nothing running. No paste: the
+   decisions file already exists next to the sheet, so the human OPENS it rather than
+   doing Save-As into a folder the picker will not let us preselect. */
+class FileBackend {
+  constructor() { this.name = 'file'; this.handle = null; this.writes = 0; }
+  static available() { return typeof window.showOpenFilePicker === 'function'; }
+
+  async idb(mode = 'readonly') {
+    if (!this._db) this._db = await new Promise((res, rej) => {
+      const r = indexedDB.open('review_sheets', 1);
+      r.onupgradeneeded = e => e.target.result.createObjectStore('handles');
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+    return this._db.transaction('handles', mode).objectStore('handles');
+  }
+  // NB the key is namespaced: see the shared file:// origin note above.
+  async remember(h) { const s = await this.idb('readwrite'); s.put(h, NS + 'handle'); }
+  async recall() {
+    const s = await this.idb();
+    return new Promise(res => { const g = s.get(NS + 'handle'); g.onsuccess = () => res(g.result || null); g.onerror = () => res(null); });
+  }
+
+  async link(handle) {
+    // Verify the handle is for THIS sheet's file before writing a byte. A stale or
+    // cross-sheet handle that passes silently writes one review into another's file.
+    const want = CFG.decisionsFile;
+    if (want && handle.name !== want)
+      throw new Error(`that file is "${handle.name}", this sheet writes "${want}" — pick the right one`);
+    if (await handle.queryPermission({ mode: 'readwrite' }) !== 'granted')
+      if (await handle.requestPermission({ mode: 'readwrite' }) !== 'granted')
+        throw new Error('write permission refused');
+    this.handle = handle; await this.remember(handle); return handle;
+  }
+  async pick() {
+    const [h] = await window.showOpenFilePicker({
+      id: 'review-sheets',                     // makes the picker reopen in the same folder
+      multiple: false,
+      types: [{ description: 'Decisions', accept: { 'application/json': ['.json'] } }],
+    });
+    return this.link(h);
+  }
+  async load() {
+    const h = this.handle || await this.recall();
+    if (!h) return null;                        // not linked yet
+    if (await h.queryPermission({ mode: 'readwrite' }) !== 'granted') { this.handle = h; return null; }
+    this.handle = h;
+    const doc = JSON.parse(await (await h.getFile()).text() || '{}');
+    frozen = doc.frozen === true; this.doc = doc; this.writes = doc.writeCount || 0;
+    return doc.decisions || {};
+  }
+  async save(ops) {
+    if (!this.handle) throw new Error('not linked to a file yet');
+    if (frozen) throw new Error('frozen: read-only');
+    // Read-modify-write, because THIS page is not the only author of its own file: a
+    // whole-file writer deletes keys it does not know about (frozen/frozenOn/…).
+    const doc = JSON.parse(await (await this.handle.getFile()).text() || '{}');
+    doc.decisions = Object.assign({}, doc.decisions || {}, ops);
+    doc.savedBy = 'review-sheet-page'; doc.savedAt = new Date().toISOString();
+    doc.writeCount = (doc.writeCount || 0) + 1;
+    doc.decidedCount = Object.values(doc.decisions).filter(v => v && v.decision).length;
+    const w = await this.handle.createWritable();
+    await w.write(JSON.stringify(doc, null, 2) + '\n'); await w.close();
+    this.writes = doc.writeCount;
+    return { writeCount: doc.writeCount, savedAt: doc.savedAt };
+  }
+  get where() { return this.handle ? this.handle.name : (CFG.decisionsPath || CFG.decisionsFile); }
+}
+
+/* Last resort. Loud, because this is the state that once cost a human a 71-row review:
+   they finished, the file was byte-identical to the pre-fill, and every choice was in
+   localStorage. */
+class LocalBackend {
+  constructor() { this.name = 'localStorage'; this.writes = 0; }
+  async load() { return LS.get('decisions', null); }
+  async save(ops) {
+    const cur = LS.get('decisions', {}) || {};
+    LS.set('decisions', Object.assign(cur, ops));
+    this.writes++; return { writeCount: this.writes };
+  }
+  get where() { return 'browser storage — NOT a file'; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   flush: debounced, op-based. Only touched rows are ever sent, so no client bug can
+   empty the file — the failure this format was bitten by.
+   ───────────────────────────────────────────────────────────────────────────────────── */
+let flushTimer = null, saving = false, lastSaved = null, saveErr = null;
+function queue(id) {
+  DEC[id].at = new Date().toISOString();
+  dirty.set(id, DEC[id]);
+  paintLink();
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(flush, 700);       // notes are typed per keystroke
+}
+async function flush() {
+  if (saving || !dirty.size || !backend) return;
+  const ops = Object.fromEntries(dirty); dirty.clear();
+  saving = true; saveErr = null; paintLink();
+  try {
+    const r = await backend.save(ops);
+    lastSaved = new Date(); if (r && r.writeCount) backend.writes = r.writeCount;
+  } catch (e) {
+    saveErr = e.message || String(e);
+    for (const [k, v] of Object.entries(ops)) if (!dirty.has(k)) dirty.set(k, v);   // keep it pending
+    showErr(saveErr);
+  } finally { saving = false; paintLink(); if (dirty.size && !saveErr) setTimeout(flush, 300); }
+}
+addEventListener('beforeunload', e => {
+  if (dirty.size) { e.preventDefault(); e.returnValue = 'Unsaved decisions are still pending.'; }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   decisions
+   ───────────────────────────────────────────────────────────────────────────────────── */
+function setDecision(id, key, opts = {}) {
+  if (frozen) { showErr('This sheet is frozen — decisions are read-only.'); return; }
+  const it = byId.get(id); if (!it) return;
+  const before = DEC[id] ? JSON.parse(JSON.stringify(DEC[id])) : null;
+  const rec = DEC[id] || (DEC[id] = { decision: '', note: '', prefill: prefillOf(it) });
+  if (rec.prefill === undefined) rec.prefill = prefillOf(it);
+  rec.decision = (rec.decision === key && opts.toggle) ? '' : key;
+  if (!opts.noUndo) { undoStack.push({ entries: [{ id, before }] }); redoStack.length = 0; }
+  queue(id);
+  patchRow(id);
+  paintCounts();
+  /* PACK: override capture. Contradicting the pre-fill is the most valuable event in the
+     sheet — that is where the machine's criterion and the human's differ — so ask why,
+     right now, while the reason is in their head. */
+  if (PACKS.overrides && isOverride(id) && !String(rec.note || '').trim() && !opts.bulk) {
+    const n = document.querySelector(`.row[data-id="${cssEsc(id)}"] .note`);
+    if (n) { n.placeholder = 'why? — this is where the real information is'; if (opts.focusNote !== false) n.focus(); }
+  }
+}
+function setNote(id, text) {
+  if (frozen) return;
+  const it = byId.get(id); if (!it) return;
+  const rec = DEC[id] || (DEC[id] = { decision: '', note: '', prefill: prefillOf(it) });
+  rec.note = text; queue(id); paintCounts();
+}
+/* Undo and redo work on ONE entry shape — {entries:[{id, before}]} — whether the action
+   touched one row or eighty. An earlier version had a separate batch shape that undo()
+   did not understand, so `u` silently did nothing after a bulk apply. Measured, not
+   theorised: an irreversible bulk action over 80 rows is one nobody dares use. */
+function applyEntries(entries) {
+  const inverse = entries.map(({ id }) =>
+    ({ id, before: DEC[id] ? JSON.parse(JSON.stringify(DEC[id])) : null }));
+  for (const { id, before } of entries) {
+    if (before === null) delete DEC[id]; else DEC[id] = before;
+    dirty.set(id, DEC[id] || { decision: '', note: '', prefill: prefillOf(byId.get(id)) });
+    patchRow(id);
+  }
+  clearTimeout(flushTimer); flushTimer = setTimeout(flush, 400);
+  paintCounts(); paintLink();
+  return inverse;
+}
+function undo() {
+  const u = undoStack.pop(); if (!u) return;
+  redoStack.push({ entries: applyEntries(u.entries) });
+}
+function redo() {
+  const r = redoStack.pop(); if (!r) return;
+  undoStack.push({ entries: applyEntries(r.entries) });
+}
+function bulkGroup(group, key) {
+  const rows = shown.filter(it => it.group === group);
+  if (!rows.length) return;
+  const entries = rows.map(it => ({ id: it.id, before: DEC[it.id] ? JSON.parse(JSON.stringify(DEC[it.id])) : null }));
+  rows.forEach(it => setDecision(it.id, key, { noUndo: true, bulk: true }));
+  undoStack.push({ entries });
+  redoStack.length = 0;
+  render();
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   render
+   ───────────────────────────────────────────────────────────────────────────────────── */
+const byId = new Map(ITEMS.map(it => [it.id, it]));
+let renderMs = 0;
+
+function cssEsc(s) { return String(s).replace(/["\\]/g, '\\$&'); }
+
+function defaultBody(it) {
+  const marks = [];
+  if (it.inferred)  marks.push('<span class="mark inferred" title="guessed from the name — the data was empty">⚠ inferred</span>');
+  if (it.contested) marks.push('<span class="mark contested" title="defensible both ways">◆ contested</span>');
+  if (it.occurs === false) marks.push('<span class="mark absent">does not occur</span>');
+  for (const [k, v] of Object.entries(it.meta || {})) marks.push(`<span class="mark absent">${esc(k)}: ${esc(v)}</span>`);
+  return `<div class="effect">${esc(it.effect || '')}</div>`
+       + (marks.length ? `<div class="marks">${marks.join('')}</div>` : '');
+}
+
+function card(it) {
+  const d = decOf(it.id), key = d && d.decision ? d.decision : '';
+  const o = OPTBY[key];
+  const ovr = isOverride(it.id);
+  const body = (window.itemBody || defaultBody)(it);
+  const thumb = it.thumb
+    ? `<div class="thumb" data-zoom="${esc(it.thumb)}" data-cap="${esc(it.label || it.id)}"><img src="${esc(it.thumb)}" loading="lazy" decoding="async" alt=""></div>`
+    : '';
+  const opts = OPTS.map(op => `<button data-set="${esc(op.key)}" class="${op.key === key ? 'sel' : ''}"`
+      + `${op.key === key ? ` style="background:${esc(op.color)}"` : ''}`
+      + ` title="${esc(op.label)} (${esc(op.hotkey || '')})">${esc(op.label)}</button>`).join('');
+  return `<div class="row${ovr ? ' override' : ''}" data-id="${esc(it.id)}"${o ? ` style="color:${esc(o.color)}"` : ''}>
+    ${thumb}
+    <div class="main">
+      <div class="label">${esc(it.label || it.id)}<span class="id">${esc(it.id)}</span>
+        ${ovr ? `<span class="mark ovr" title="you overruled the pre-fill, which said ${esc(d.prefill)}">⟲ was ${esc(d.prefill)}</span>` : ''}</div>
+      ${body}
+    </div>
+    <div class="ctrl">
+      <div class="opts">${opts}</div>
+      <textarea class="note" rows="1" placeholder="note…">${esc(d ? d.note || '' : '')}</textarea>
+    </div>
+  </div>`;
+}
+
+function passes(it) {
+  const q = el('q').value.trim().toLowerCase();
+  if (q) {
+    const hay = `${it.id} ${it.label || ''} ${it.effect || ''} ${it.group || ''}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  const fs = el('fstate').value;
+  if (fs === '__undecided' && isDecided(it.id)) return false;
+  if (fs === '__decided' && !isDecided(it.id)) return false;
+  if (fs && fs.startsWith('k:') && decisionOf(it.id) !== fs.slice(2)) return false;
+  const fg = el('fgroup').value;
+  if (fg && it.group !== fg) return false;
+  const fm = el('fmark').value;
+  if (fm === 'override' && !isOverride(it.id)) return false;
+  if (fm === 'contested' && !it.contested) return false;
+  if (fm === 'inferred' && !it.inferred) return false;
+  if (fm === 'noted' && !String((decOf(it.id) || {}).note || '').trim()) return false;
+  return true;
+}
+
+function render() {
+  const t0 = performance.now();
+  shown = ITEMS.filter(passes);
+  const groups = new Map();
+  for (const it of shown) { if (!groups.has(it.group)) groups.set(it.group, []); groups.get(it.group).push(it); }
+  let html = '';
+  for (const [name, items] of groups) {
+    const bulk = OPTS.map(op => `<button class="btn" data-bulk="${esc(op.key)}" data-group="${esc(name)}">all ${esc(op.label.toLowerCase())}</button>`).join('');
+    /* de-stick groups of <=3: a sticky label sits on top of the only row in a group of
+       one, which makes it unreadable and unclickable. */
+    html += `<div class="gh${items.length <= 3 ? ' nostick' : ''}">${esc(name)}`
+          + `<span class="ghcount">${items.length}</span><span class="ghbulk">${bulk}</span></div>`;
+    html += items.map(card).join('');
+  }
+  el('list').innerHTML = html || `<div style="padding:40px 18px;color:var(--dim)">Nothing matches these filters.</div>`;
+  for (const ta of el('list').querySelectorAll('.note')) if (ta.value) grow(ta);
+  renderMs = performance.now() - t0;
+  measure();                                  // new .gh nodes have no top yet
+  paintCounts();
+  if (focusIdx >= shown.length) focusIdx = shown.length - 1;
+  paintFocus(false);
+}
+
+/* patch ONE row instead of re-rendering the list: at 600 rows a full innerHTML rebuild
+   on every keystroke drops the caret out of the note field and feels broken. */
+function patchRow(id) {
+  const node = document.querySelector(`.row[data-id="${cssEsc(id)}"]`);
+  if (!node) return;
+  const it = byId.get(id), d = decOf(id), key = d && d.decision ? d.decision : '';
+  const o = OPTBY[key];
+  node.style.color = o ? o.color : '';
+  node.classList.toggle('override', isOverride(id));
+  for (const b of node.querySelectorAll('[data-set]')) {
+    const on = b.dataset.set === key;
+    b.classList.toggle('sel', on);
+    b.style.background = on ? OPTBY[b.dataset.set].color : '';
+  }
+  const lab = node.querySelector('.label .mark.ovr');
+  if (isOverride(id) && !lab) node.querySelector('.label').insertAdjacentHTML('beforeend',
+    `<span class="mark ovr">⟲ was ${esc(d.prefill)}</span>`);
+  if (!isOverride(id) && lab) lab.remove();
+}
+
+/* ── measured header height, every render and every resize ───────────────────────────── */
+function measure() {
+  const h = document.querySelector('header').offsetHeight;
+  document.documentElement.style.setProperty('--hh', h + 'px');
+  for (const g of document.querySelectorAll('.gh')) g.style.top = h + 'px';
+}
+addEventListener('resize', measure);
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   counts, link state, banners
+   ───────────────────────────────────────────────────────────────────────────────────── */
+function paintCounts() {
+  const total = ITEMS.length;
+  let decided = 0, ovr = 0, noted = 0, contested = 0;
+  const per = {};
+  for (const it of ITEMS) {
+    const k = decisionOf(it.id);
+    if (k) { decided++; per[k] = (per[k] || 0) + 1; }
+    if (isOverride(it.id)) ovr++;
+    if (String((decOf(it.id) || {}).note || '').trim()) noted++;
+    if (it.contested && !isDecided(it.id)) contested++;
+  }
+  const inn = OPTS.filter(o => o.counts === 'in').reduce((n, o) => n + (per[o.key] || 0), 0);
+  const out = OPTS.filter(o => o.counts === 'out').reduce((n, o) => n + (per[o.key] || 0), 0);
+  el('progress').innerHTML =
+    `<b>${decided}</b>/${total} decided · <b>${total - decided}</b> left`
+    + (OPTS.some(o => o.counts) ? ` · ${inn} in · ${out} stripped` : '')
+    + ` · ${ovr} overruled · ${noted} noted`
+    + (shown.length !== total ? ` · showing ${shown.length}` : '')
+    + (PACKS.perf ? ` · render ${renderMs.toFixed(0)}ms` : '');
+  el('ovrCount').textContent = ovr;
+  paintPosture(inn, out, total - decided);
+  if (el('digest').classList.contains('on')) paintDigest();
+}
+
+function paintPosture(inn, out, undecided) {
+  const p = CFG.posture || {};
+  const strip = p.mode === 'whitelist';
+  el('posturePanel').innerHTML =
+    `<h3>Posture — ${esc((p.mode || 'whitelist').toUpperCase())}</h3>`
+    + `<div>${esc(p.explain || (strip
+        ? 'Default is EXCLUDE. Anything not kept will be stripped.'
+        : 'Default is INCLUDE. Only what you cut will be stripped.'))}</div>`
+    + `<div style="margin-top:5px"><b style="color:var(--ok)">${inn}</b> kept · `
+    + `<b style="color:var(--bad)">${out}</b> stripped`
+    + (strip && undecided ? ` · <b style="color:var(--warn)">${undecided} undecided, which this posture also strips</b>` : '')
+    + `</div>`;
+}
+
+function paintLink() {
+  const p = el('link');
+  const n = dirty.size;
+  let cls = 'pill live', txt;
+  if (!backend) { txt = 'connecting…'; cls = 'pill'; }
+  else if (frozen) { txt = '🔒 frozen — read only'; cls = 'pill'; }
+  else if (saveErr) { txt = '⚠ not saved — ' + saveErr.slice(0, 60); cls = 'pill bad'; }
+  else if (saving) txt = '↑ saving…';
+  else if (n) txt = `● ${n} pending`;
+  else if (backend.name === 'localStorage') { txt = '⚠ browser storage only — NOT a file'; cls = 'pill bad'; }
+  else if (backend.name === 'file' && !backend.handle) { txt = '○ not linked — click “link file”'; cls = 'pill bad'; }
+  else txt = `● ${backend.name} · saved${lastSaved ? ' ' + ago(lastSaved) : ''} · ${backend.writes} write${backend.writes === 1 ? '' : 's'}`;
+  p.className = cls; p.textContent = txt; p.title = backend ? backend.where : '';
+}
+const ago = d => { const s = Math.round((Date.now() - d) / 1000);
+  return s < 2 ? 'just now' : s < 60 ? s + 's ago' : Math.round(s / 60) + 'm ago'; };
+setInterval(() => { if (!dirty.size && !saving) paintLink(); }, 5000);
+
+function showErr(msg) {
+  const b = el('err'); b.classList.remove('hide');
+  b.innerHTML = esc(msg) + ' <button class="btn" onclick="this.parentNode.classList.add(\'hide\')">dismiss</button>';
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   PACK: overrides digest — the rows the human overruled, read as a GROUP.
+   Eight scattered disagreements look like noise; read together they are one coherent rule
+   the sheet did not know. Row-by-row you implement eight exceptions and miss the rule.
+   ───────────────────────────────────────────────────────────────────────────────────── */
+function overrideList() {
+  return ITEMS.filter(it => isOverride(it.id)).map(it => {
+    const d = decOf(it.id);
+    return { id: it.id, label: it.label || it.id, group: it.group,
+             from: d.prefill, to: d.decision, note: (d.note || '').trim(), effect: it.effect || '' };
+  });
+}
+function paintDigest() {
+  const list = overrideList();
+  el('digestSub').textContent = `${list.length} of ${ITEMS.length} · ${list.filter(o => o.note).length} with a reason`;
+  el('digestBody').innerHTML = list.length ? list.map(o =>
+    `<div class="item"><div class="t">${esc(o.label)}</div>`
+    + `<div class="d">${esc(o.group)} · ${esc(o.from)} → <b>${esc(o.to)}</b></div>`
+    + (o.note ? `<div class="n">“${esc(o.note)}”</div>`
+              : `<div class="d" style="color:var(--warn)">no reason recorded</div>`)
+    + `</div>`).join('')
+    : `<div class="empty">No overrides yet.<br><br>That is not necessarily agreement — a sheet
+       with zero overrides has either nailed the criterion or failed to make disagreeing easy,
+       and those two look identical in the output file.</div>`;
+}
+function digestText() {
+  const list = overrideList();
+  return `# Overrides — ${CFG.title || CFG.sheetId}\n`
+    + `# ${list.length} of ${ITEMS.length} rows. Read these as a GROUP before acting on them individually.\n`
+    + (CFG.criterion ? `# Sheet ranked by: ${CFG.criterion}\n` : '')
+    + '\n' + list.map(o => `- ${o.label} (${o.id}, ${o.group}): ${o.from} -> ${o.to}`
+        + (o.note ? `\n    "${o.note}"` : '\n    (no reason recorded)')).join('\n') + '\n';
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   PACK: keyboard. Mouse-only across 600 rows is the real bottleneck.
+   ───────────────────────────────────────────────────────────────────────────────────── */
+const KEYMAP = [
+  ['j / ↓', 'next row'], ['k / ↑', 'previous row'],
+  ['1 … 9', 'set the decision for the focused row'],
+  ['⇧ + 1…9', 'apply to the whole visible group'],
+  ['n', 'jump into the note'], ['Enter', 'leave the note'],
+  ['u / ⇧U', 'undo / redo — bulk actions undo as one'],
+  ['g', 'next undecided row'], ['c', 'next contested row'],
+  ['/', 'search'], ['o', 'overrides digest'], ['v', 'list / grid'],
+  ['z', 'zoom the focused thumbnail'], ['?', 'this help'],
+];
+function paintKeys() {
+  el('keysBody').innerHTML = KEYMAP.map(([k, d]) =>
+    `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(d)}</td></tr>`).join('')
+    + OPTS.map(o => `<tr><td><kbd>${esc(o.hotkey)}</kbd></td><td>= ${esc(o.label)}</td></tr>`).join('');
+}
+function focusRow(i, scroll = true) {
+  if (!shown.length) return;
+  focusIdx = Math.max(0, Math.min(shown.length - 1, i));
+  paintFocus(scroll);
+}
+function paintFocus(scroll) {
+  for (const r of document.querySelectorAll('.row.focus')) r.classList.remove('focus');
+  const it = shown[focusIdx]; if (!it) return;
+  const node = document.querySelector(`.row[data-id="${cssEsc(it.id)}"]`);
+  if (!node) return;
+  node.classList.add('focus');
+  if (scroll) {
+    const top = node.getBoundingClientRect().top;
+    const hh = document.querySelector('header').offsetHeight + 34;   // clear the sticky group label
+    if (top < hh || top > innerHeight - 90)
+      scrollBy({ top: top - hh - 8, behavior: 'instant' });
+  }
+}
+function jumpTo(pred, from = focusIdx) {
+  for (let n = 1; n <= shown.length; n++) {
+    const i = (from + n + shown.length) % shown.length;
+    if (pred(shown[i])) { focusRow(i); return true; }
+  }
+  return false;
+}
+
+addEventListener('keydown', e => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if (e.key === 'Escape') {
+    if (typing) { document.activeElement.blur(); return; }
+    el('keys').classList.remove('on'); el('digest').classList.remove('on'); el('zoom').classList.remove('on');
+    return;
+  }
+  if (typing) {
+    if (e.key === 'Enter' && document.activeElement.classList.contains('note')) {
+      e.preventDefault(); document.activeElement.blur();
+    }
+    return;
+  }
+  if (!PACKS.keys) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+
+  if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); focusRow(focusIdx + 1); return; }
+  if (k === 'k' || k === 'ArrowUp')   { e.preventDefault(); focusRow(focusIdx - 1); return; }
+  if (k === '/') { e.preventDefault(); el('q').focus(); el('q').select(); return; }
+  if (k === '?') { el('keys').classList.toggle('on'); return; }
+  if (k === 'u') { undo(); return; }
+  if (k === 'U') { redo(); return; }
+  if (k === 'g') { if (!jumpTo(it => !isDecided(it.id))) showErr('No undecided rows in view.'); return; }
+  if (k === 'c') { if (!jumpTo(it => it.contested)) showErr('No contested rows in view.'); return; }
+  if (k === 'o' && PACKS.overrides) { toggleDigest(); return; }
+  if (k === 'v' && PACKS.grid && CFG.media) { toggleGrid(); return; }
+  if (k === 'n') { const it = shown[focusIdx]; if (it) {
+      const n = document.querySelector(`.row[data-id="${cssEsc(it.id)}"] .note`); if (n) { e.preventDefault(); n.focus(); } }
+    return; }
+  if (k === 'z') { const it = shown[focusIdx]; if (it && it.thumb) openZoom(it.thumb, it.label || it.id); return; }
+
+  const op = OPTS.find(o => o.hotkey === k);
+  if (op) {
+    const it = shown[focusIdx >= 0 ? focusIdx : 0]; if (!it) return;
+    e.preventDefault();
+    if (focusIdx < 0) focusRow(0);
+    setDecision(it.id, op.key, { focusNote: false });
+    focusRow(focusIdx + 1);                     // advance, so triage is one key per row
+    return;
+  }
+  const shifted = OPTS.find(o => o.hotkey && '!@#$%^&*('['123456789'.indexOf(o.hotkey)] === k);
+  if (shifted) { const it = shown[focusIdx]; if (it) { e.preventDefault(); bulkGroup(it.group, shifted.key); } }
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   PACK: grid / contact sheet
+   ───────────────────────────────────────────────────────────────────────────────────── */
+function toggleGrid() {
+  const on = !document.body.classList.contains('grid');
+  document.body.classList.toggle('grid', on);
+  el('btnGrid').classList.toggle('on', on);
+  el('btnGrid').textContent = on ? 'list' : 'grid';
+  el('cell').classList.toggle('hide', !on);
+  LS.set('grid', on); measure(); paintFocus(false);
+}
+function openZoom(src, cap) {
+  el('zimg').src = src; el('zcap').textContent = cap; el('zoom').classList.add('on');
+}
+el('zoom').onclick = () => el('zoom').classList.remove('on');
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   wiring
+   ───────────────────────────────────────────────────────────────────────────────────── */
+el('list').addEventListener('click', e => {
+  const set = e.target.closest('[data-set]');
+  if (set) { const row = set.closest('.row'); setDecision(row.dataset.id, set.dataset.set, { toggle: true });
+             focusIdx = shown.findIndex(it => it.id === row.dataset.id); paintFocus(false); return; }
+  const bulk = e.target.closest('[data-bulk]');
+  if (bulk) { bulkGroup(bulk.dataset.group, bulk.dataset.bulk); return; }
+  const th = e.target.closest('[data-zoom]');
+  if (th) { openZoom(th.dataset.zoom, th.dataset.cap); return; }
+  const row = e.target.closest('.row');
+  if (row) { focusIdx = shown.findIndex(it => it.id === row.dataset.id); paintFocus(false); }
+});
+el('list').addEventListener('input', e => {
+  if (e.target.classList.contains('note')) {
+    setNote(e.target.closest('.row').dataset.id, e.target.value);
+    grow(e.target);
+  }
+});
+/* Notes auto-grow. A one-line box that hides what the human just wrote makes the most
+   valuable field on the row look like the least important one. */
+function grow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+}
+
+for (const id of ['q', 'fstate', 'fgroup', 'fmark'])
+  el(id).addEventListener(id === 'q' ? 'input' : 'change', () => { render(); LS.set('filters', filtersNow()); });
+const filtersNow = () => ({ q: el('q').value, s: el('fstate').value, g: el('fgroup').value, m: el('fmark').value });
+
+el('fold').onclick = () => { autofoldArmed = false; setFold(!document.body.classList.contains('folded')); };
+function setFold(f) {
+  document.body.classList.toggle('folded', f);
+  el('fold').textContent = f ? '▸ brief' : '▾ brief';
+  LS.set('folded', f);
+  measure();                                    // the header just changed height
+}
+
+/* The brief has two jobs that fight each other: it must be SEEN — it carries the posture
+   and any rule the agent invented, and burying those is the most expensive mistake this
+   format makes — and it must not sit in front of the rows the human came to work on.
+   Bounding its height stops the worst case. Auto-folding on the FIRST real scroll
+   resolves the rest: they see it, then the moment they start working it gets out of the
+   way, and the fold is remembered from then on. One click brings it back. */
+let autofoldArmed = false;
+function armAutofold(neverChosen) {
+  if (!neverChosen) return;                     // they have folded or unfolded before: respect it
+  autofoldArmed = true;
+  addEventListener('scroll', onFirstScroll, { passive: true });
+}
+function onFirstScroll() {
+  if (!autofoldArmed || scrollY < 220) return;
+  autofoldArmed = false;
+  removeEventListener('scroll', onFirstScroll);
+  setFold(true);
+  el('fold').classList.add('flash');            // say where it went
+  setTimeout(() => el('fold').classList.remove('flash'), 2400);
+}
+el('nextUndecided').onclick = () => { if (!jumpTo(it => !isDecided(it.id), focusIdx)) showErr('No undecided rows in view.'); };
+el('btnKeys').onclick = () => el('keys').classList.toggle('on');
+el('btnGrid').onclick = toggleGrid;
+el('cell').oninput = e => { document.documentElement.style.setProperty('--cell', e.target.value + 'px'); measure(); };
+function toggleDigest() { const on = !el('digest').classList.contains('on');
+  el('digest').classList.toggle('on', on); if (on) paintDigest(); }
+el('btnDigest').onclick = toggleDigest;
+el('digestClose').onclick = () => el('digest').classList.remove('on');
+el('digestCopy').onclick = () => copyText(digestText(), el('digestCopy'));
+
+for (const b of document.querySelectorAll('[data-copy]'))
+  b.onclick = () => copyText(el(b.dataset.copy).textContent, b);
+async function copyText(text, btn) {
+  const label = btn.textContent;
+  try { await navigator.clipboard.writeText(text); btn.textContent = 'copied ✓'; }
+  catch (e) {                                   /* refused on some file:// pages */
+    const ta = document.createElement('textarea'); ta.value = text;
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); btn.textContent = 'copied ✓'; }
+    catch (e2) { btn.textContent = 'press ⌘/Ctrl+C'; }
+    ta.remove();
+  }
+  setTimeout(() => btn.textContent = label, 1400);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────────────
+   boot
+   ───────────────────────────────────────────────────────────────────────────────────── */
+async function boot() {
+  el('title').textContent = CFG.title || 'Review sheet';
+  el('subtitle').textContent = CFG.subtitle || '';
+  document.title = CFG.title || 'Review sheet';
+  el('briefBody').innerHTML = (CFG.briefHtml || '')
+    + (CFG.criterion ? `<div class="crit">⭐ Ranked by: ${esc(CFG.criterion)}</div>` : '');
+
+  /* Any rule the agent INVENTED goes in its own panel, stated plainly. An invented premise
+     presented as a finding is the most expensive mistake this format makes. */
+  if ((CFG.invented || []).length) {
+    el('inventedPanel').classList.remove('hide');
+    el('inventedPanel').innerHTML = '<h3>⚠ Rules I invented — overrule these</h3><ul style="margin:4px 0 0 16px;padding:0">'
+      + CFG.invented.map(s => `<li>${esc(s)}</li>`).join('') + '</ul>';
+  }
+
+  el('fstate').innerHTML = `<option value="">any state</option><option value="__undecided">undecided</option>`
+    + `<option value="__decided">decided</option>`
+    + OPTS.map(o => `<option value="k:${esc(o.key)}">= ${esc(o.label)}</option>`).join('');
+  const groups = [...new Set(ITEMS.map(it => it.group))].sort();
+  el('fgroup').innerHTML = `<option value="">all ${esc(CFG.groupLabel || 'group')}s (${groups.length})</option>`
+    + groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+  paintKeys();
+  if (!PACKS.keys) el('btnKeys').classList.add('hide');
+  if (!PACKS.overrides) el('btnDigest').classList.add('hide');
+  if (PACKS.perf) document.body.classList.add('perf');
+  if (PACKS.grid && CFG.media) el('btnGrid').classList.remove('hide');
+
+  const f = LS.get('filters', null);
+  if (f) { el('q').value = f.q || ''; el('fstate').value = f.s || ''; el('fgroup').value = f.g || ''; el('fmark').value = f.m || ''; }
+  const foldChoice = LS.get('folded', null);    // read BEFORE setFold writes it
+  setFold(foldChoice === true);
+  armAutofold(foldChoice === null);
+
+  /* pick a backend */
+  let loaded = null;
+  if (SIDECAR && SIDECAR.mode === 'server') {
+    backend = new ServerBackend(SIDECAR);
+    el('dpath').textContent = SIDECAR.decisionsPath;
+    el('spath').textContent = SIDECAR.sheetPath;
+    el('pathwhy').textContent = 'the sidecar owns this file — nothing to copy or paste';
+    el('pathbar').classList.remove('hide'); el('spathbar').classList.remove('hide');
+    try { loaded = await backend.load(); }
+    catch (e) { showErr('Could not read the decisions file: ' + e.message); }
+  } else if (FileBackend.available()) {
+    backend = new FileBackend();
+    el('pathbar').classList.remove('hide');
+    el('dpath').textContent = CFG.decisionsPath || CFG.decisionsFile;
+    el('pathwhy').innerHTML = 'no sidecar running — <button class="btn pri" id="linkBtn">link file</button> '
+      + 'or drag it onto this page';
+    el('spathbar').classList.toggle('hide', !CFG.sheetPath);
+    el('spath').textContent = CFG.sheetPath || '';
+    setTimeout(() => { const b = el('linkBtn'); if (b) b.onclick = async () => {
+      try { await backend.pick(); const d = await backend.load(); if (d) { DEC = d; render(); } paintLink(); }
+      catch (e) { showErr(e.message); } }; }, 0);
+    try { loaded = await backend.load(); } catch (e) { loaded = null; }
+    if (loaded === null) showErr('Not linked to a file yet — decisions are being held in the browser only. '
+      + 'Click “link file” (or drag the decisions .json onto this page) before you start.');
+  } else {
+    backend = new LocalBackend();
+    loaded = await backend.load();
+    showErr('This browser cannot write files (no File System Access API) and no sidecar is running. '
+      + 'Work is held in browser storage only — run serve_sheet.py, or use the copy-JSON fallback.');
+  }
+
+  /* Seed. Only rows the human has NOT touched take the pre-fill: a row they have decided
+     is left exactly alone. Seeding all-or-nothing is how 350 pre-filled rows once
+     vanished because two rows had been clicked. */
+  let seeded = 0, kept = 0;
+  DEC = loaded && typeof loaded === 'object' ? loaded : {};
+  for (const it of ITEMS) {
+    if (DEC[it.id] && DEC[it.id].decision) { kept++; continue; }
+    if (prefillOf(it) != null) {
+      DEC[it.id] = Object.assign({ note: '' }, DEC[it.id], { decision: prefillOf(it), prefill: prefillOf(it) });
+      seeded++;
+    }
+  }
+  if (seeded && kept) {
+    const b = el('err'); b.className = 'banner warn'; b.classList.remove('hide');
+    b.innerHTML = `Filled in <b>${seeded}</b> rows from the pre-fill, and kept your <b>${kept}</b> `
+      + `existing decisions untouched. <button class="btn" onclick="this.parentNode.classList.add('hide')">ok</button>`;
+  }
+
+  /* drag the decisions file onto the page — no picker at all (Chromium) */
+  if (backend instanceof FileBackend) {
+    addEventListener('dragover', e => e.preventDefault());
+    addEventListener('drop', async e => {
+      e.preventDefault();
+      const item = e.dataTransfer.items && e.dataTransfer.items[0];
+      if (!item || !item.getAsFileSystemHandle) return;
+      try { const h = await item.getAsFileSystemHandle();
+        if (h.kind !== 'file') return showErr('Drop the decisions .json, not a folder.');
+        await backend.link(h); const d = await backend.load(); if (d) { DEC = d; render(); }
+        paintLink(); el('err').classList.add('hide');
+      } catch (err) { showErr(err.message); }
+    });
+  }
+
+  if (LS.get('grid', false) && CFG.media && PACKS.grid) toggleGrid();
+  render();
+  paintLink();
+  if (frozen) showErr('This sheet is FROZEN. The decisions file is the source of truth and is read-only.');
+}
+boot();
+</script>
+</body>
+</html>
