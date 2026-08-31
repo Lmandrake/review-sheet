@@ -224,7 +224,13 @@ def main() -> int:
     # reviewed. The tell is a key only the sidecar writes — a pre-fill cannot forge it.
     # A comment saying "do not run this" is not a guard; this is.
     dpath = os.path.join(HERE, "decisions.json")
-    if os.path.exists(dpath) and "--i-know-this-overwrites-the-owners-decisions" not in sys.argv:
+    # Regenerating the SHEET is always safe: it renders from the decisions file, so a newer
+    # template or a fixed row renderer can be picked up mid-review. Only the DECISION
+    # generator is locked. Keeping these in one command is what forces people to reach for
+    # the override flag and lose their work.
+    sheet_only = "--sheet-only" in sys.argv
+    if not sheet_only and os.path.exists(dpath) \
+            and "--i-know-this-overwrites-the-owners-decisions" not in sys.argv:
         try:
             with open(dpath, "r", encoding="utf-8") as fh:
                 existing = json.load(fh)
@@ -239,7 +245,9 @@ def main() -> int:
                   file=sys.stderr)
             return 3
         if existing.get("frozen"):
-            print(f"REFUSING to run: {dpath} is FROZEN.", file=sys.stderr)
+            print(f"REFUSING to run: {dpath} is FROZEN.\n"
+                  f"Use --sheet-only to rebuild the page against the frozen decisions.",
+                  file=sys.stderr)
             return 3
 
     items, decisions = build()
@@ -264,8 +272,10 @@ def main() -> int:
     out = os.path.join(HERE, "sheet.html")
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(html)
-    # Regenerating the SHEET is always safe — it reads the decisions file. Only the
-    # decision generator is locked, which is why the guard above is on this write.
+    if sheet_only:
+        print(f"  sheet      {out}  ({len(html) / 1024:.0f} KB)  — rebuilt")
+        print(f"  decisions  {dpath}  — LEFT ALONE (--sheet-only)")
+        return 0
     with open(dpath, "w", encoding="utf-8") as fh:
         json.dump(decisions, fh, indent=2)
 

@@ -170,18 +170,6 @@ body.grid .row.sel-tint{border-color:currentColor}
 #zoom img{image-rendering:pixelated;max-width:70vw;max-height:70vh}
 #zoom .cap{text-align:center;color:var(--dim);font-size:12px;margin-top:8px}
 
-/* ── overrides digest ────────────────────────────────────────────────────────────────── */
-#digest{position:fixed;right:0;top:0;bottom:0;width:min(440px,92vw);z-index:50;
-  background:#0d1014;border-left:1px solid var(--line);display:none;flex-direction:column}
-#digest.on{display:flex}
-#digest .dh{padding:11px 14px;border-bottom:1px solid var(--line);display:flex;gap:9px;align-items:center}
-#digest .db{overflow:auto;padding:10px 14px;font-size:12.5px}
-#digest .item{border-left:2px solid var(--accent);padding:5px 0 7px 9px;margin-bottom:10px}
-#digest .item .t{font-weight:600}
-#digest .item .d{color:var(--dim);font-size:11.5px}
-#digest .item .n{color:#dff0ff;margin-top:3px}
-#digest .empty{color:var(--dim)}
-
 /* ── keymap legend ───────────────────────────────────────────────────────────────────── */
 #keys{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:60;display:none;
   background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px 20px;
@@ -267,7 +255,6 @@ body.grid .row.sel-tint{border-color:currentColor}
     <span class="spacer"></span>
     <span class="pill" id="progress"></span>
     <button class="btn" id="nextUndecided" title="jump to the next undecided row (g)">next undecided</button>
-    <button class="btn" id="btnDigest" title="read the overrides as a group (o)">overrides <b id="ovrCount">0</b></button>
     <button class="btn hide" id="btnGrid" title="list / grid (v)">grid</button>
     <input type="range" id="cell" class="hide" min="80" max="260" value="132" title="thumbnail size">
     <button class="btn" id="btnKeys" title="keyboard help (?)">?</button>
@@ -279,16 +266,6 @@ body.grid .row.sel-tint{border-color:currentColor}
 <div id="list"></div>
 
 <div id="zoom"><div><div class="box"><img id="zimg" alt=""></div><div class="cap" id="zcap"></div></div></div>
-
-<div id="digest">
-  <div class="dh">
-    <b>Overrides</b><span class="sub" id="digestSub"></span>
-    <span class="spacer"></span>
-    <button class="btn" id="digestCopy">copy</button>
-    <button class="btn" id="digestClose">close</button>
-  </div>
-  <div class="db" id="digestBody"></div>
-</div>
 
 <div id="keys">
   <h3>Keyboard</h3>
@@ -316,15 +293,6 @@ const OPTS  = CFG.options || [];
 const OPTBY = Object.fromEntries(OPTS.map(o => [o.key, o]));
 const SIDECAR = window.__SIDECAR__ || null;
 
-/* Which capability packs are live. ?packs=keys,grid,perf,overrides overrides the default,
-   which exists so each one can be judged on its own before it earns a place. */
-const PACKS = (() => {
-  const all = { keys: true, grid: true, perf: true, overrides: true };
-  const p = new URLSearchParams(location.search).get('packs');
-  if (p === null) return all;
-  const on = new Set(p.split(',').map(s => s.trim()).filter(Boolean));
-  return Object.fromEntries(Object.keys(all).map(k => [k, on.has(k)]));
-})();
 
 const el   = id => document.getElementById(id);
 const esc  = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -523,13 +491,12 @@ function setDecision(id, key, opts = {}) {
   queue(id);
   patchRow(id);
   paintCounts();
-  /* PACK: override capture. Contradicting the pre-fill is the most valuable event in the
-     sheet — that is where the machine's criterion and the human's differ — so ask why,
-     right now, while the reason is in their head. */
-  if (PACKS.overrides && isOverride(id) && !String(rec.note || '').trim() && !opts.bulk) {
-    const n = document.querySelector(`.row[data-id="${cssEsc(id)}"] .note`);
-    if (n) { n.placeholder = 'why? — this is where the real information is'; if (opts.focusNote !== false) n.focus(); }
-  }
+  /* Deliberately NOT auto-focusing the note here. An earlier version grabbed focus and
+     demanded "why?" on every disagreement; it reads as nagging, and a control that fights
+     the human gets worked around rather than used. The row still MARKS itself as an
+     override (the ⟲ chip and the amber rail in card()), the "overrides only" filter still
+     finds them, and `serve_sheet.py --overrides` still reads them as a group — which is
+     what section 2b actually asks for, since the reader is the agent, not the human. */
 }
 function setNote(id, text) {
   if (frozen) return;
@@ -706,10 +673,8 @@ function paintCounts() {
     + (OPTS.some(o => o.counts) ? ` · ${inn} in · ${out} stripped` : '')
     + ` · ${ovr} overruled · ${noted} noted`
     + (shown.length !== total ? ` · showing ${shown.length}` : '')
-    + (PACKS.perf ? ` · render ${renderMs.toFixed(0)}ms` : '');
-  el('ovrCount').textContent = ovr;
+    + ` · render ${renderMs.toFixed(0)}ms`;
   paintPosture(inn, out, total - decided);
-  if (el('digest').classList.contains('on')) paintDigest();
 }
 
 function paintPosture(inn, out, undecided) {
@@ -749,39 +714,6 @@ function showErr(msg) {
   b.innerHTML = esc(msg) + ' <button class="btn" onclick="this.parentNode.classList.add(\'hide\')">dismiss</button>';
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────────────
-   PACK: overrides digest — the rows the human overruled, read as a GROUP.
-   Eight scattered disagreements look like noise; read together they are one coherent rule
-   the sheet did not know. Row-by-row you implement eight exceptions and miss the rule.
-   ───────────────────────────────────────────────────────────────────────────────────── */
-function overrideList() {
-  return ITEMS.filter(it => isOverride(it.id)).map(it => {
-    const d = decOf(it.id);
-    return { id: it.id, label: it.label || it.id, group: it.group,
-             from: d.prefill, to: d.decision, note: (d.note || '').trim(), effect: it.effect || '' };
-  });
-}
-function paintDigest() {
-  const list = overrideList();
-  el('digestSub').textContent = `${list.length} of ${ITEMS.length} · ${list.filter(o => o.note).length} with a reason`;
-  el('digestBody').innerHTML = list.length ? list.map(o =>
-    `<div class="item"><div class="t">${esc(o.label)}</div>`
-    + `<div class="d">${esc(o.group)} · ${esc(o.from)} → <b>${esc(o.to)}</b></div>`
-    + (o.note ? `<div class="n">“${esc(o.note)}”</div>`
-              : `<div class="d" style="color:var(--warn)">no reason recorded</div>`)
-    + `</div>`).join('')
-    : `<div class="empty">No overrides yet.<br><br>That is not necessarily agreement — a sheet
-       with zero overrides has either nailed the criterion or failed to make disagreeing easy,
-       and those two look identical in the output file.</div>`;
-}
-function digestText() {
-  const list = overrideList();
-  return `# Overrides — ${CFG.title || CFG.sheetId}\n`
-    + `# ${list.length} of ${ITEMS.length} rows. Read these as a GROUP before acting on them individually.\n`
-    + (CFG.criterion ? `# Sheet ranked by: ${CFG.criterion}\n` : '')
-    + '\n' + list.map(o => `- ${o.label} (${o.id}, ${o.group}): ${o.from} -> ${o.to}`
-        + (o.note ? `\n    "${o.note}"` : '\n    (no reason recorded)')).join('\n') + '\n';
-}
 
 /* ─────────────────────────────────────────────────────────────────────────────────────
    PACK: keyboard. Mouse-only across 600 rows is the real bottleneck.
@@ -793,7 +725,7 @@ const KEYMAP = [
   ['n', 'jump into the note'], ['Enter', 'leave the note'],
   ['u / ⇧U', 'undo / redo — bulk actions undo as one'],
   ['g', 'next undecided row'], ['c', 'next contested row'],
-  ['/', 'search'], ['o', 'overrides digest'], ['v', 'list / grid'],
+  ['/', 'search'], ['v', 'list / grid'],
   ['z', 'zoom the focused thumbnail'], ['?', 'this help'],
 ];
 function paintKeys() {
@@ -831,7 +763,7 @@ addEventListener('keydown', e => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
   if (e.key === 'Escape') {
     if (typing) { document.activeElement.blur(); return; }
-    el('keys').classList.remove('on'); el('digest').classList.remove('on'); el('zoom').classList.remove('on');
+    el('keys').classList.remove('on'); el('zoom').classList.remove('on');
     return;
   }
   if (typing) {
@@ -840,7 +772,6 @@ addEventListener('keydown', e => {
     }
     return;
   }
-  if (!PACKS.keys) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
 
@@ -852,8 +783,7 @@ addEventListener('keydown', e => {
   if (k === 'U') { redo(); return; }
   if (k === 'g') { if (!jumpTo(it => !isDecided(it.id))) showErr('No undecided rows in view.'); return; }
   if (k === 'c') { if (!jumpTo(it => it.contested)) showErr('No contested rows in view.'); return; }
-  if (k === 'o' && PACKS.overrides) { toggleDigest(); return; }
-  if (k === 'v' && PACKS.grid && CFG.media) { toggleGrid(); return; }
+  if (k === 'v' && CFG.media) { toggleGrid(); return; }
   if (k === 'n') { const it = shown[focusIdx]; if (it) {
       const n = document.querySelector(`.row[data-id="${cssEsc(it.id)}"] .note`); if (n) { e.preventDefault(); n.focus(); } }
     return; }
@@ -864,7 +794,7 @@ addEventListener('keydown', e => {
     const it = shown[focusIdx >= 0 ? focusIdx : 0]; if (!it) return;
     e.preventDefault();
     if (focusIdx < 0) focusRow(0);
-    setDecision(it.id, op.key, { focusNote: false });
+    setDecision(it.id, op.key);
     focusRow(focusIdx + 1);                     // advance, so triage is one key per row
     return;
   }
@@ -951,11 +881,6 @@ el('nextUndecided').onclick = () => { if (!jumpTo(it => !isDecided(it.id), focus
 el('btnKeys').onclick = () => el('keys').classList.toggle('on');
 el('btnGrid').onclick = toggleGrid;
 el('cell').oninput = e => { document.documentElement.style.setProperty('--cell', e.target.value + 'px'); measure(); };
-function toggleDigest() { const on = !el('digest').classList.contains('on');
-  el('digest').classList.toggle('on', on); if (on) paintDigest(); }
-el('btnDigest').onclick = toggleDigest;
-el('digestClose').onclick = () => el('digest').classList.remove('on');
-el('digestCopy').onclick = () => copyText(digestText(), el('digestCopy'));
 
 for (const b of document.querySelectorAll('[data-copy]'))
   b.onclick = () => copyText(el(b.dataset.copy).textContent, b);
@@ -997,10 +922,8 @@ async function boot() {
   el('fgroup').innerHTML = `<option value="">all ${esc(CFG.groupLabel || 'group')}s (${groups.length})</option>`
     + groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
   paintKeys();
-  if (!PACKS.keys) el('btnKeys').classList.add('hide');
-  if (!PACKS.overrides) el('btnDigest').classList.add('hide');
-  if (PACKS.perf) document.body.classList.add('perf');
-  if (PACKS.grid && CFG.media) el('btnGrid').classList.remove('hide');
+  document.body.classList.add('perf');
+  if (CFG.media) el('btnGrid').classList.remove('hide');
 
   const f = LS.get('filters', null);
   if (f) { el('q').value = f.q || ''; el('fstate').value = f.s || ''; el('fgroup').value = f.g || ''; el('fmark').value = f.m || ''; }
@@ -1072,7 +995,7 @@ async function boot() {
     });
   }
 
-  if (LS.get('grid', false) && CFG.media && PACKS.grid) toggleGrid();
+  if (LS.get('grid', false) && CFG.media) toggleGrid();
   render();
   paintLink();
   if (frozen) showErr('This sheet is FROZEN. The decisions file is the source of truth and is read-only.');

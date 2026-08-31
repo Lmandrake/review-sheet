@@ -309,6 +309,56 @@ def _durable_write(path: str, payload: bytes) -> str:
                 pass
 
 
+def overrides_of(store: DecisionsFile) -> list[dict]:
+    """Every row where the human contradicted the pre-fill."""
+    doc = store.read()
+    decisions = doc.get("decisions") if isinstance(doc.get("decisions"), dict) else {}
+    out = []
+    for key, value in sorted(decisions.items()):
+        if not isinstance(value, dict):
+            continue
+        pre = value.get("prefill")
+        if pre in (None, "") or value.get("decision") == pre:
+            continue
+        out.append({"id": key, "from": pre, "to": value.get("decision"),
+                    "note": str(value.get("note") or "").strip()})
+    return out
+
+
+def print_overrides(store: DecisionsFile) -> int:
+    """Read the overrides as a GROUP, which is the whole point.
+
+    Eight scattered disagreements look like noise. Read together they are usually one
+    coherent rule the sheet did not know — and row by row you implement eight exceptions
+    and miss the rule. This lives in the tool rather than on the human's screen because
+    the reader is the agent.
+    """
+    doc = store.read()
+    rows = len(doc.get("decisions") or {})
+    ovr = overrides_of(store)
+    if not doc.get("savedBy"):
+        print("⚠️  This file was never written by the sheet — it is still the pre-fill, so\n"
+              "    there are no human decisions in it to disagree with.\n")
+    print(f"  {len(ovr)} override(s) out of {rows} rows"
+          + (f"  ({100 * len(ovr) // rows}%)" if rows else ""))
+    if doc.get("criterion"):
+        print(f"  sheet ranked by: {doc['criterion']}")
+    print()
+    if not ovr:
+        print("  No overrides.\n\n  That is not the same as agreement. A sheet with zero overrides has\n"
+              "  either nailed the criterion or failed to make disagreeing easy, and those\n"
+              "  two look identical in this file. Compare against your other sheets before\n"
+              "  treating it as success.")
+        return 0
+    for o in ovr:
+        print(f"  - {o['id']}: {o['from']} -> {o['to']}")
+        print(f"      \"{o['note']}\"" if o["note"] else "      (no reason recorded)")
+    noted = sum(1 for o in ovr if o["note"])
+    print(f"\n  {noted} of {len(ovr)} carry a reason. Read them together before acting on any "
+          f"one of them:\n  the reasons are where the human's criterion differs from yours.")
+    return 0
+
+
 def status_of(store: DecisionsFile, sheet: str | None = None) -> dict:
     """What a shell can ask instead of asking the human whether they saved."""
     try:
@@ -693,6 +743,8 @@ def main() -> int:
     ap.add_argument("--no-token", action="store_true", help="disable the session token (not on WSL)")
     ap.add_argument("--no-open", action="store_true", help="do not launch a browser")
     ap.add_argument("--status", action="store_true", help="print the decisions file's status and exit")
+    ap.add_argument("--overrides", action="store_true",
+                    help="print the rows the human overruled, as a group, and exit")
     ap.add_argument("--selftest", action="store_true", help="verify this machine's behaviour and exit")
     args = ap.parse_args()
 
@@ -714,6 +766,9 @@ def main() -> int:
     if args.status:
         print(json.dumps(status_of(store, args.sheet), indent=2))
         return 0
+
+    if args.overrides:
+        return print_overrides(store)
 
     if not args.sheet:
         ap.error("--sheet is required unless --status or --selftest")
