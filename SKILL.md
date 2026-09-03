@@ -136,6 +136,34 @@ presents it as one collects agreement instead of judgement.
 * At hundreds of rows the bottleneck becomes the mouse, not the judgement — see
   **`references/throughput.md`**.
 
+### ⭐ Count a marker against the real data BEFORE you add it
+
+A badge, glyph, chip or highlight is worth adding only if it is **rare**. Measured on a real
+board of 137 items, four candidate markers came out like this:
+
+| candidate | rows | verdict |
+|---|---|---|
+| a draft is ready | 1 | ship it — high signal |
+| an offer exists | 12 (9%) | ship it |
+| material on disk | 29 (21%) | ship it |
+| message body present | 33 (24%) | ship it |
+| *who/what this involves* | **105 (77%)** | **cut it — wallpaper** |
+
+A marker on three-quarters of the rows teaches the eye to skip that position, which quietly
+destroys the *other* markers sharing it. Run the count first; it takes one query and it is the
+difference between a signal and a decoration.
+
+Two corollaries worth keeping:
+
+- 🔴 **Never mark a field that is never populated.** Four more candidates on that same board
+  looked perfect in the schema and were filled on **0 of 137** rows. A marker there is invisible
+  forever, and worse, its *absence* reads as "none of these rows have that problem" when the truth
+  is "nobody ever recorded one." Absence of data is not absence of the thing.
+- **Distinguish a FLAG from a CATEGORY.** "A draft is ready" is a flag: absence is normal, so
+  sparsity is the whole test. "Where this came from" is a category: every row has exactly one, so
+  100% coverage is *correct* there and the sparsity rule does not apply. They need separate
+  positions on the row — sharing one collapses two meanings into a glyph that means neither.
+
 ## 5. 🔴 Posture must be explicit, in the page AND in the export
 
 A whitelist and a blacklist are the same UI and opposite meanings.
@@ -168,6 +196,18 @@ of "the agent must remember" and into plumbing that enforces them:
 
 Full protocol, the `file://` fallback, the shared-origin hazard and the picker options that do
 *not* require pasting a path: **`references/persistence.md`**.
+
+⚠️ **If a decision SPAWNS an output, the sheet must be able to show it — or say where it went.**
+Measured 2026-09-02: a row offered "draft a reply", he clicked it, the choice persisted correctly,
+a generator produced a real validated artifact on disk — and **no surface could read it back.** No
+error, no empty state, nothing: from where he sat the button had done nothing, and he would only
+ever have found the result by knowing which directory to look in.
+
+A request that persists while its result stays invisible is worse than a button that admits it is
+dead, because the work looks *lost* rather than *pending*. Whenever an action produces an
+artifact, build the read side in the same change as the write side, and give the row a visible
+state — "drafted", with a way to open it. If you genuinely cannot show it yet, say on the row
+where it lands.
 
 ## 7. Freeze the result, and make the freeze real
 
@@ -219,6 +259,42 @@ destroyed only by clearing browsing data.
 ⇒ Build the guard into the tool, not the conversation: a consumer that cannot tell the human's
 decisions from its own suggestions will eventually ship the wrong ones silently.
 
+### 🔴 And one step earlier: prove the CONTROL FIRES. Click one in a real browser.
+
+Measured 2026-09-02, and it is the cheapest bug to ship and the most expensive to notice. A
+review board's buttons were wired to the sidecar. Everything a script can check was green:
+
+* the whole unit suite passed — 2,224 tests
+* the page was served, the token injected, `POST /decisions` round-tripped to disk
+* every row carried its id, every button carried its action
+* **the buttons rendered visibly enabled** — 220 of them
+
+Clicking one threw `Cannot read properties of null (reading 'parentNode')` and saved nothing. The
+markup named the button container one thing and the script looked for another. Every button on the
+page was live-looking and inert, and **no assertion in the suite could see it**, because a
+rendering test proves the markup and a protocol test proves the endpoint — neither one executes
+the handler between them.
+
+⭐ **So before handing the sheet over: serve it, click one control of each kind, and read the
+browser console.** Not the DOM — the *console*. A handler that throws leaves the page looking
+perfect.
+
+Then check the whole consequence, not just the write:
+
+```
+did the value land on disk?           …and did the row's state change on screen?
+did the count in the header follow?   …and does the page still agree with the file after a reload?
+```
+
+The follow-on bug that same day: the click *did* save and the row *did* move, and a header still
+read "7" above six rows, because the counter refresh sat behind an early return. Saved-but-
+contradicted is worse than not-saved, because he has no reason to look again.
+
+⚠️ **Fix it in the seam, then re-introduce the bug to prove the guard bites.** Both defects above
+were pinned with tests asserting the contract *from both sides* — the markup's class name and the
+script's selector — and each guard was verified by putting the original bug back and watching the
+suite go red. A regression test you have never seen fail is a test you are trusting on faith.
+
 ## 9. What to ask the human, and when
 
 * Ask for the **posture** before generating — whitelist vs blacklist changes everything.
@@ -240,6 +316,12 @@ Do not tell the human the sheet is ready until every line is true.
 - [ ] The sidecar is running, or the fallback path is printed and copyable.
 - [ ] You have said, in chat, how many rows you decided and which ones you are least sure of.
 - [ ] You have **not** asked the human to paste a path, retype a filename, or hunt for a folder.
+- [ ] You **served it and clicked one control of each kind in a real browser**, and read the
+      console — not just the DOM. Enabled-and-inert passes every scripted check there is.
+- [ ] Every marker you added was **counted against the real data first**, and none of them sits on
+      most of the rows.
+- [ ] Any action that produces an artifact can be **read back onto the row**, or the row says
+      where the artifact went.
 
 ## Red flags
 
@@ -253,3 +335,8 @@ Do not tell the human the sheet is ready until every line is true.
 | "I'll ask them to save it in the right folder" | A path they retype is a path they get wrong. Run the sidecar. |
 | "I'll pre-fill nothing so I don't bias them" | A blank sheet is a chore you handed back. Decide, then let them disagree. |
 | "The metric ranked these, so the order is the answer" | A metric ranks quality. It cannot rank worth. |
+| "The tests pass, so the buttons work" | A rendering test proves markup, a protocol test proves the endpoint. Neither runs the handler between them. Click one. |
+| "The button is enabled, so it's wired" | 220 enabled buttons once threw on every click. Enabled is a style; wired is a console with no errors. |
+| "It saved, so the row is correct" | It saved and the header still read 7 above six rows. Check the whole consequence, then reload. |
+| "This glyph is useful, I'll add it" | Count it against real rows first. At 77% coverage it is wallpaper, and it ruins the markers beside it. |
+| "The field is in the schema, so I can mark it" | It was populated on 0 of 137 rows. An invisible marker whose absence reads as "no problems here" is worse than none. |
