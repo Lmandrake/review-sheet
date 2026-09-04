@@ -37,7 +37,7 @@ dropped one every time. That is why the chrome is no longer yours to author, and
 
 ⛔ **Hard gate: `check_sheet.py` must exit 0 before you hand the sheet over.** Every FAIL it
 reports is a defect a real person hit and complained about. `assets/test_check_sheet.py`
-proves the gate bites — 17/17 historical defects caught.
+proves the gate bites — 18/18 historical defects caught.
 
 Details: **`references/chrome-and-layout.md`** (what the chrome must do and why),
 **`references/persistence.md`** (how the file gets written), **`references/throughput.md`**

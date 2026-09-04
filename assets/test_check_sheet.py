@@ -110,6 +110,10 @@ CASES = [
     ("two options share a hotkey",
      lambda h: set_config(h, lambda c: {**c, "options": [{**o, "hotkey": "1"} for o in c["options"]]}),
      "decision hotkeys are unique"),
+
+    ("no decisions file discoverable and none passed to the checker",
+     lambda h: set_config(h, drop_config_key("decisionsFile")),
+     "a decisions file exists to review"),
 ]
 
 

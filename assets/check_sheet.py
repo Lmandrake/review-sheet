@@ -226,6 +226,21 @@ def check(path: str, decisions_path: str | None) -> list[tuple[str, str, str]]:
                 f"{len(missing)} missing, e.g. {missing[:3]}" if missing else
                 f"{sum(1 for it in items if it.get('thumb'))} images")
 
+    # ── 6b. a decisions file is actually there to review ──────────────────────────────
+    # check() used to pass clean whenever it was simply never HANDED a --decisions path —
+    # a sheet whose pre-fill generator never ran, or whose file lives somewhere else,
+    # shipped with nothing behind the "copy path" button and nobody was told.
+    if not decisions_path:
+        cfg_name = str((cfg or {}).get("decisionsFile") or "").strip()
+        if cfg_name:
+            candidate = os.path.join(os.path.dirname(os.path.abspath(path)), cfg_name)
+            if os.path.isfile(candidate):
+                decisions_path = candidate
+    add(FAIL if not decisions_path else OK, "a decisions file exists to review",
+        "" if decisions_path else
+        "no --decisions given and no file at CONFIG.decisionsFile beside the sheet — "
+        "run the pre-fill generator first, or pass --decisions explicitly")
+
     # ── 7. posture and criterion ─────────────────────────────────────────────────────
     posture = (cfg.get("posture") or {}).get("mode")
     add(FAIL if not posture else OK, "posture is stated in the page",
