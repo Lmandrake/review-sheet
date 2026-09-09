@@ -37,7 +37,7 @@ dropped one every time. That is why the chrome is no longer yours to author, and
 
 ⛔ **Hard gate: `check_sheet.py` must exit 0 before you hand the sheet over.** Every FAIL it
 reports is a defect a real person hit and complained about. `assets/test_check_sheet.py`
-proves the gate bites — 19 historical defects caught, plus one valid sheet that must NOT
+proves the gate bites — 20 historical defects caught, plus one valid sheet that must NOT
 fail.
 
 Details: **`references/chrome-and-layout.md`** (what the chrome must do and why),
@@ -297,7 +297,13 @@ Then check the whole consequence, not just the write:
 ```
 did the value land on disk?           …and did the row's state change on screen?
 did the count in the header follow?   …and does the page still agree with the file after a reload?
+did the ERROR that was on screen come down when the retry succeeded?
 ```
+
+That last one is not hypothetical: a forced retry past the truncation guard wrote correctly and
+left its red *"refused…"* banner up over a button permanently reading *"clearing…"*. **A banner
+nobody takes down becomes a lie the moment it stops being true**, and it is the same defect as
+the stale header — the write is fine and the screen says it failed.
 
 The follow-on bug that same day: the click *did* save and the row *did* move, and a header still
 read "7" above six rows, because the counter refresh sat behind an early return. Saved-but-
@@ -351,5 +357,6 @@ Do not tell the human the sheet is ready until every line is true.
 | "The tests pass, so the buttons work" | A rendering test proves markup, a protocol test proves the endpoint. Neither runs the handler between them. Click one. |
 | "The button is enabled, so it's wired" | 220 enabled buttons once threw on every click. Enabled is a style; wired is a console with no errors. |
 | "It saved, so the row is correct" | It saved and the header still read 7 above six rows. Check the whole consequence, then reload. |
+| "The error banner is up, so the save failed" | A forced retry wrote correctly and its refusal banner stayed on screen with the button stuck on "clearing…". Whoever puts a banner up owns taking it down. |
 | "This glyph is useful, I'll add it" | Count it against real rows first. At 77% coverage it is wallpaper, and it ruins the markers beside it. |
 | "The field is in the schema, so I can mark it" | It was populated on 0 of 137 rows. An invisible marker whose absence reads as "no problems here" is worse than none. |

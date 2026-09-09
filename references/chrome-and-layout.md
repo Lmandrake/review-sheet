@@ -98,7 +98,7 @@ Checks that **WARN** (read them out loud to the human): fold not persisted, no c
 fallback, `measure()` not re-run, `showSaveFilePicker` used without `showOpenFilePicker`.
 
 `assets/test_check_sheet.py` breaks a working sheet in each of these ways and asserts the
-matching check flips to FAIL — 19 of them, plus one mutation that must NOT fail (attributes
+matching check flips to FAIL — 20 of them, plus one mutation that must NOT fail (attributes
 in the other order on a JSON block once produced five cascading phantom FAILs on a perfectly
 good sheet, which teaches an agent to ignore the gate). A gate nobody has tested is a gate
 that turns "nobody checked" into "it was checked and it's fine".

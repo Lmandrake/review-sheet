@@ -60,6 +60,12 @@ CASES = [
      lambda h: h.replace("data-copy=", "data-nocopy=").replace("clipboard.writeText", "noop"),
      "a copy button exists for the save path"),
 
+    # Found by clicking it: the forced write landed and the red refusal stayed on screen.
+    ("a successful save leaves the failure banner up",
+     lambda h: h.replace("if (saveBannerUp && !dirty.size) { clearBanner(); saveBannerUp = false; }",
+                         "if (saveBannerUp && !dirty.size) { saveBannerUp = false; }"),
+     "a successful save clears the failure banner"),
+
     ("group labels are not sticky",
      lambda h: re.sub(r"(\.gh\s*\{[^}]*)position\s*:\s*sticky", r"\1position:static", h),
      "group labels are sticky"),

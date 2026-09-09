@@ -488,6 +488,9 @@ class LocalBackend {
    empty the file — the failure this format was bitten by.
    ───────────────────────────────────────────────────────────────────────────────────── */
 let flushTimer = null, saving = false, lastSaved = null, saveErr = null, forceNext = false;
+/* Whether the banner currently on screen is one FLUSH put there. Only those get cleared on
+   a successful save — a seed or freeze banner is not mine to remove. */
+let saveBannerUp = false;
 function queue(id) {
   DEC[id].at = new Date().toISOString();
   dirty.set(id, DEC[id]);
@@ -503,10 +506,19 @@ async function flush() {
   try {
     const r = await backend.save(ops, { force });
     lastSaved = new Date(); if (r && r.writeCount) backend.writes = r.writeCount;
+    /* The write landed — so the refusal on screen is now a LIE. Nothing else clears it:
+       paintLink only repaints the pill, and a red "refused…" banner over a disabled
+       "clearing…" button left the human staring at a failure that had already succeeded.
+       Saved-but-contradicted is worse than not-saved, because he has no reason to look
+       again. Only clear it when there is nothing left pending to fail. */
+    if (saveBannerUp && !dirty.size) { clearBanner(); saveBannerUp = false; }
   } catch (e) {
     saveErr = e.message || String(e);
     for (const [k, v] of Object.entries(ops)) if (!dirty.has(k)) dirty.set(k, v);   // keep it pending
+    // A forced write that fails must say so with a FRESH banner and a live button, not
+    // leave the stale one up: showTruncationRefusal/showErr rebuild the node entirely.
     if (e.forceable) showTruncationRefusal(e); else showErr(saveErr);
+    saveBannerUp = true;
   } finally { saving = false; paintLink(); if (dirty.size && !saveErr) setTimeout(flush, 300); }
 }
 
@@ -524,7 +536,14 @@ function showTruncationRefusal(e) {
   const btn = b.querySelector('#forceSave');
   if (btn) btn.onclick = () => {
     btn.disabled = true; btn.textContent = 'clearing…';
-    forceNext = true; saveErr = null; clearTimeout(flushTimer); flush();
+    forceNext = true; saveErr = null; clearTimeout(flushTimer);
+    Promise.resolve(flush()).then(() => {
+      /* A success removes this whole banner and a failure rebuilds it, so in both cases
+         this node is gone. Still connected means the flush no-opped (a save already in
+         flight, nothing pending) — give the human a live button back rather than one
+         permanently reading "clearing…". */
+      if (btn.isConnected) { btn.disabled = false; btn.textContent = 'yes — clear them anyway'; }
+    });
   };
 }
 addEventListener('beforeunload', e => {
@@ -784,6 +803,15 @@ function banner(cls, html, extra = '') {
   return b;
 }
 function showErr(msg, extra = '') { banner('bad', esc(msg), extra); }
+/* Take the banner down and empty it. Emptying matters as much as hiding: a stale node
+   left in the DOM comes back with the next classList toggle still carrying old text and
+   a disabled button. */
+function clearBanner() {
+  const b = el('err');
+  b.classList.add('hide');
+  b.className = 'banner bad hide';
+  b.innerHTML = '';
+}
 
 
 /* ─────────────────────────────────────────────────────────────────────────────────────

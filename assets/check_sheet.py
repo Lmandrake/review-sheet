@@ -130,6 +130,16 @@ def check(path: str, decisions_path: str | None) -> list[tuple[str, str, str]]:
     add(WARN if not fallback else OK, "clipboard has a fallback",
         "" if fallback else "the clipboard API is refused on some file:// pages")
 
+    # A save banner must come DOWN when the save succeeds. Measured in a browser: after a
+    # forced write went through, the red "refused…" banner stayed up over a disabled
+    # "clearing…" button — the file was correct and the screen said it had failed. Saved-
+    # but-contradicted is the worst outcome the format has, because nobody looks again.
+    clears = len(re.findall(r"\bclearBanner\s*\(", html))
+    add(FAIL if clears < 2 else OK, "a successful save clears the failure banner",
+        "" if clears >= 2 else
+        "define clearBanner() and CALL it on the save success path — paintLink() only "
+        "repaints the pill, so a stale refusal outlives the write that succeeded")
+
     if "showSaveFilePicker" in html and "showOpenFilePicker" not in html:
         add(WARN, "uses showSaveFilePicker only",
             "Save-As cannot be given a folder, so the human must paste a path. Pre-create "

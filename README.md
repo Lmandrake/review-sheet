@@ -26,7 +26,7 @@ assets/
   sheet_template.html         a COMPLETE sheet. fill in two JSON blocks, author no chrome
   serve_sheet.py              the sidecar: owns the decisions file, stdlib only
   check_sheet.py              the gate. must exit 0 before you hand a sheet over
-  test_check_sheet.py         proves the gate bites — 19 historical defects caught, and
+  test_check_sheet.py         proves the gate bites — 20 historical defects caught, and
                               one mutation that must NOT fail (a phantom FAIL is a defect too)
 demo/
   make_demo.py                worked example: 400 rows, 200 real PNG sprites, no deps
