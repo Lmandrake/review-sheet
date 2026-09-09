@@ -78,6 +78,11 @@ body.folded #brief{display:none}
   border:1px solid var(--line);border-radius:6px;padding:8px 11px;margin:8px 0;font-size:12px}
 .pathbar code{color:var(--link);word-break:break-all}
 .pathbar b{color:var(--dim);font-weight:600}
+/* the visible fallback for "copy JSON" when the clipboard API is refused: the work itself,
+   on screen, selectable — never a button that silently did nothing */
+#exportTa{width:100%;margin:0 0 8px;background:#0c1420;border:1px solid #2b3a4d;
+  border-radius:6px;padding:7px 9px;color:#dff0ff;font-family:ui-monospace,monospace;
+  font-size:11px;resize:vertical}
 
 /* filter bar — OUTSIDE #brief, so folding the brief never hides the search box */
 .bar{display:flex;gap:8px;align-items:center;padding:8px 18px;flex-wrap:wrap;
@@ -239,6 +244,16 @@ body.grid .row.sel-tint{border-color:currentColor}
       <b>This sheet</b> <code id="spath"></code>
       <button class="btn" data-copy="spath">copy path</button>
     </div>
+    <!-- The export route out of browser-only storage. It exists because SKILL.md §8 tells
+         a human whose work never reached disk to "reopen the sheet and click copy JSON" —
+         and for a long time there was no such control anywhere on the page. -->
+    <div class="pathbar hide" id="exportbar">
+      <b>Not saving to a file</b>
+      <span class="sub">your decisions are held in this browser only</span>
+      <button class="btn pri" id="copyJson">copy JSON</button>
+      <span class="sub" id="copywhy">puts the whole decisions file on the clipboard — paste it over the .json</span>
+    </div>
+    <textarea id="exportTa" class="hide" rows="8" spellcheck="false" readonly></textarea>
   </div>
 
   <div class="bar">
@@ -327,8 +342,11 @@ const prefillOf = it => (it.prefill ?? null);
 const decOf     = id => DEC[id] || null;
 const decisionOf = id => { const d = decOf(id); return d && d.decision ? d.decision : ''; };
 const isDecided = id => !!decisionOf(id);
+/* A CLEARED row is not a disagreement. {decision:'', prefill:'keep'} means "I unset this",
+   so the amber override rail and the "overrides only" filter must both leave it alone —
+   serve_sheet.py counts it the same way. */
 const isOverride = id => {
-  const d = decOf(id); if (!d) return false;
+  const d = decOf(id); if (!d || !d.decision) return false;
   const pf = d.prefill ?? null;
   return pf !== null && pf !== '' && d.decision !== pf;
 };
@@ -350,15 +368,21 @@ class ServerBackend {
     this.writes = doc.writeCount || 0;
     return doc.decisions || {};
   }
-  async save(ops) {
+  async save(ops, opts = {}) {
     const r = await fetch('/decisions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Sheet-Token': this.cfg.token },
-      body: JSON.stringify({ ops }),
+      body: JSON.stringify(opts.force ? { ops, force: true } : { ops }),
     });
     const body = await r.json().catch(() => ({}));
     if (r.status === 423) { frozen = true; throw new Error('frozen: ' + (body.frozenMeaning || 'read-only')); }
-    if (r.status === 409) throw new Error(body.hint || 'refused a truncating write');
+    if (r.status === 409) {
+      const e = new Error(body.hint || body.error || 'refused a truncating write');
+      /* Only the truncation refusal is forceable. A "decisions is not an object" 409 is a
+         corrupt file, and forcing past it would destroy exactly what it is protecting. */
+      e.forceable = body.error === 'truncating-write';
+      throw e;
+    }
     if (!r.ok) throw new Error(body.error || ('POST /decisions ' + r.status));
     this.writes = body.writeCount;
     return body;
@@ -418,11 +442,20 @@ class FileBackend {
   }
   async save(ops) {
     if (!this.handle) throw new Error('not linked to a file yet');
-    if (frozen) throw new Error('frozen: read-only');
     // Read-modify-write, because THIS page is not the only author of its own file: a
     // whole-file writer deletes keys it does not know about (frozen/frozenOn/…).
     const doc = JSON.parse(await (await this.handle.getFile()).text() || '{}');
-    doc.decisions = Object.assign({}, doc.decisions || {}, ops);
+    /* Judge the freeze on the doc we JUST read, not on a boot-time global: a freeze
+       applied while the sheet is open must bite on the next write, not after a reload.
+       The freeze is enforced, not announced. */
+    if (doc.frozen === true) {
+      frozen = true; paintLink();
+      throw new Error('frozen: ' + (doc.frozenMeaning || 'the decisions file is read-only'));
+    }
+    if (frozen) throw new Error('frozen: read-only');
+    const merged = Object.assign({}, doc.decisions || {}, ops);
+    for (const [k, v] of Object.entries(ops)) if (v === null) delete merged[k];
+    doc.decisions = merged;
     doc.savedBy = 'review-sheet-page'; doc.savedAt = new Date().toISOString();
     doc.writeCount = (doc.writeCount || 0) + 1;
     doc.decidedCount = Object.values(doc.decisions).filter(v => v && v.decision).length;
@@ -442,7 +475,9 @@ class LocalBackend {
   async load() { return LS.get('decisions', null); }
   async save(ops) {
     const cur = LS.get('decisions', {}) || {};
-    LS.set('decisions', Object.assign(cur, ops));
+    Object.assign(cur, ops);
+    for (const [k, v] of Object.entries(ops)) if (v === null) delete cur[k];   // null deletes
+    LS.set('decisions', cur);
     this.writes++; return { writeCount: this.writes };
   }
   get where() { return 'browser storage — NOT a file'; }
@@ -452,7 +487,7 @@ class LocalBackend {
    flush: debounced, op-based. Only touched rows are ever sent, so no client bug can
    empty the file — the failure this format was bitten by.
    ───────────────────────────────────────────────────────────────────────────────────── */
-let flushTimer = null, saving = false, lastSaved = null, saveErr = null;
+let flushTimer = null, saving = false, lastSaved = null, saveErr = null, forceNext = false;
 function queue(id) {
   DEC[id].at = new Date().toISOString();
   dirty.set(id, DEC[id]);
@@ -463,15 +498,34 @@ function queue(id) {
 async function flush() {
   if (saving || !dirty.size || !backend) return;
   const ops = Object.fromEntries(dirty); dirty.clear();
+  const force = forceNext; forceNext = false;
   saving = true; saveErr = null; paintLink();
   try {
-    const r = await backend.save(ops);
+    const r = await backend.save(ops, { force });
     lastSaved = new Date(); if (r && r.writeCount) backend.writes = r.writeCount;
   } catch (e) {
     saveErr = e.message || String(e);
     for (const [k, v] of Object.entries(ops)) if (!dirty.has(k)) dirty.set(k, v);   // keep it pending
-    showErr(saveErr);
+    if (e.forceable) showTruncationRefusal(e); else showErr(saveErr);
   } finally { saving = false; paintLink(); if (dirty.size && !saveErr) setTimeout(flush, 300); }
+}
+
+/* The truncation guard is right to refuse a batch that clears dozens of decided rows —
+   and undoing a bulk action is exactly such a batch when it is legitimate. Without a way
+   through, those ops sit pending forever and the screen and the file diverge silently.
+   So the page offers the way through as an explicit human act: one button, one click,
+   sending force=1 for that batch only. It is never sent automatically. */
+function showTruncationRefusal(e) {
+  const b = banner('bad',
+    esc(e.message || 'refused: this batch clears an implausible number of decided rows.')
+    + ` <b>${dirty.size}</b> change(s) are still pending in the page and nothing has been `
+    + 'written. If you meant to clear them, say so:',
+    '<button class="btn pri" id="forceSave">yes — clear them anyway</button>');
+  const btn = b.querySelector('#forceSave');
+  if (btn) btn.onclick = () => {
+    btn.disabled = true; btn.textContent = 'clearing…';
+    forceNext = true; saveErr = null; clearTimeout(flushTimer); flush();
+  };
 }
 addEventListener('beforeunload', e => {
   if (dirty.size) { e.preventDefault(); e.returnValue = 'Unsaved decisions are still pending.'; }
@@ -513,7 +567,10 @@ function applyEntries(entries) {
     ({ id, before: DEC[id] ? JSON.parse(JSON.stringify(DEC[id])) : null }));
   for (const { id, before } of entries) {
     if (before === null) delete DEC[id]; else DEC[id] = before;
-    dirty.set(id, DEC[id] || { decision: '', note: '', prefill: prefillOf(byId.get(id)) });
+    /* null is DELETE in the protocol. Sending an empty stub instead left a row behind that
+       reads as "looked at it, decided nothing" — undoing back to a row that was never
+       touched must remove the entry, not invent one. */
+    dirty.set(id, before === null ? null : DEC[id]);
     patchRow(id);
   }
   clearTimeout(flushTimer); flushTimer = setTimeout(flush, 400);
@@ -704,15 +761,29 @@ function paintLink() {
   else if (backend.name === 'file' && !backend.handle) { txt = '○ not linked — click “link file”'; cls = 'pill bad'; }
   else txt = `● ${backend.name} · saved${lastSaved ? ' ' + ago(lastSaved) : ''} · ${backend.writes} write${backend.writes === 1 ? '' : 's'}`;
   p.className = cls; p.textContent = txt; p.title = backend ? backend.where : '';
+  /* The copy-JSON escape hatch is shown exactly while the work is NOT in a file, and it
+     disappears the moment a link is established. */
+  const unlinked = !!backend && (backend.name === 'localStorage'
+                                 || (backend.name === 'file' && !backend.handle));
+  el('exportbar').classList.toggle('hide', !unlinked);
+  if (!unlinked) el('exportTa').classList.add('hide');
 }
 const ago = d => { const s = Math.round((Date.now() - d) / 1000);
   return s < 2 ? 'just now' : s < 60 ? s + 's ago' : Math.round(s / 60) + 'm ago'; };
 setInterval(() => { if (!dirty.size && !saving) paintLink(); }, 5000);
 
-function showErr(msg) {
-  const b = el('err'); b.classList.remove('hide');
-  b.innerHTML = esc(msg) + ' <button class="btn" onclick="this.parentNode.classList.add(\'hide\')">dismiss</button>';
+/* Banners share one node, so every writer must set its OWN class. The seed banner used to
+   leave 'banner warn' behind and every later error — save failed, frozen, 409 — rendered
+   amber for the rest of the session. Colour is the only thing that says "this one matters". */
+function banner(cls, html, extra = '') {
+  const b = el('err');
+  b.className = 'banner ' + cls;
+  b.classList.remove('hide');
+  b.innerHTML = html + ' ' + extra
+    + ' <button class="btn" onclick="this.parentNode.classList.add(\'hide\')">dismiss</button>';
+  return b;
 }
+function showErr(msg, extra = '') { banner('bad', esc(msg), extra); }
 
 
 /* ─────────────────────────────────────────────────────────────────────────────────────
@@ -882,6 +953,39 @@ el('btnKeys').onclick = () => el('keys').classList.toggle('on');
 el('btnGrid').onclick = toggleGrid;
 el('cell').oninput = e => { document.documentElement.style.setProperty('--cell', e.target.value + 'px'); measure(); };
 
+/* ── copy JSON: the export route when the work is NOT in a file ───────────────────────
+   The whole decisions doc, on the clipboard, in the shape the file wants — so a session
+   that never reached disk can be recovered by pasting rather than retyped or lost. */
+function decisionsDoc() {
+  return JSON.stringify({
+    sheetId: CFG.sheetId || 'unnamed',
+    posture: (CFG.posture || {}).mode || '',
+    criterion: CFG.criterion || '',
+    exportedBy: 'review-sheet-page',        // NOT savedBy: this is a copy, not a save
+    exportedAt: new Date().toISOString(),
+    decidedCount: Object.values(DEC).filter(v => v && v.decision).length,
+    decisions: DEC,
+  }, null, 2) + '\n';
+}
+async function copyDecisions(btn) {
+  const text = decisionsDoc(), ta = el('exportTa'), why = el('copywhy');
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (e) { ok = false; }
+  if (!ok) {
+    // Show the JSON rather than fail quietly: the clipboard API is refused on some
+    // file:// pages, and a copy button that does nothing is how a review gets lost.
+    ta.classList.remove('hide'); ta.value = text; ta.focus(); ta.select();
+    try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+    why.textContent = ok
+      ? 'copied — and shown below so you can check it landed'
+      : 'the clipboard is blocked here — the JSON is below: select all (Ctrl/⌘+A), copy, '
+        + 'and paste it over the decisions .json';
+  }
+  btn.textContent = ok ? 'copied ✓' : 'copy it below ↓';
+  setTimeout(() => { btn.textContent = 'copy JSON'; }, 2500);
+}
+el('copyJson').onclick = () => copyDecisions(el('copyJson'));
+
 for (const b of document.querySelectorAll('[data-copy]'))
   b.onclick = () => copyText(el(b.dataset.copy).textContent, b);
 async function copyText(text, btn) {
@@ -954,30 +1058,36 @@ async function boot() {
       catch (e) { showErr(e.message); } }; }, 0);
     try { loaded = await backend.load(); } catch (e) { loaded = null; }
     if (loaded === null) showErr('Not linked to a file yet — decisions are being held in the browser only. '
-      + 'Click “link file” (or drag the decisions .json onto this page) before you start.');
+      + 'Click “link file” (or drag the decisions .json onto this page) before you start. '
+      + 'Whatever you have already done can be lifted out with “copy JSON” in the brief above.');
   } else {
     backend = new LocalBackend();
     loaded = await backend.load();
     showErr('This browser cannot write files (no File System Access API) and no sidecar is running. '
-      + 'Work is held in browser storage only — run serve_sheet.py, or use the copy-JSON fallback.');
+      + 'Work is held in browser storage only — run serve_sheet.py, or use “copy JSON” in the '
+      + 'brief above to lift it out and paste it over the decisions .json.');
   }
 
-  /* Seed. Only rows the human has NOT touched take the pre-fill: a row they have decided
-     is left exactly alone. Seeding all-or-nothing is how 350 pre-filled rows once
-     vanished because two rows had been clicked. */
-  let seeded = 0, kept = 0;
+  /* Seed. Only rows the loaded file says NOTHING about take the pre-fill. Seeding
+     all-or-nothing is how 350 pre-filled rows once vanished because two rows had been
+     clicked — and the mirror-image bug is just as bad: ANY record for a row, including
+     one whose decision is '', is a human act. CLEARING a row is a decision, so re-seeding
+     over it puts a choice on the screen that the file does not hold, and under whitelist
+     posture the row is stripped while the sheet says it is kept. */
+  let seeded = 0, kept = 0, cleared = 0;
   DEC = loaded && typeof loaded === 'object' ? loaded : {};
   for (const it of ITEMS) {
-    if (DEC[it.id] && DEC[it.id].decision) { kept++; continue; }
+    const rec = Object.prototype.hasOwnProperty.call(DEC, it.id) ? DEC[it.id] : undefined;
+    if (rec != null) { if (rec.decision) kept++; else cleared++; continue; }
     if (prefillOf(it) != null) {
-      DEC[it.id] = Object.assign({ note: '' }, DEC[it.id], { decision: prefillOf(it), prefill: prefillOf(it) });
+      DEC[it.id] = { decision: prefillOf(it), prefill: prefillOf(it), note: '' };
       seeded++;
     }
   }
-  if (seeded && kept) {
-    const b = el('err'); b.className = 'banner warn'; b.classList.remove('hide');
-    b.innerHTML = `Filled in <b>${seeded}</b> rows from the pre-fill, and kept your <b>${kept}</b> `
-      + `existing decisions untouched. <button class="btn" onclick="this.parentNode.classList.add('hide')">ok</button>`;
+  if (seeded && (kept || cleared)) {
+    banner('warn', `Filled in <b>${seeded}</b> rows from the pre-fill and left your existing `
+      + `entries untouched — <b>${kept}</b> decided`
+      + (cleared ? `, <b>${cleared}</b> deliberately cleared` : '') + '.');
   }
 
   /* drag the decisions file onto the page — no picker at all (Chromium) */

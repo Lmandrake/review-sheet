@@ -37,7 +37,8 @@ dropped one every time. That is why the chrome is no longer yours to author, and
 
 ⛔ **Hard gate: `check_sheet.py` must exit 0 before you hand the sheet over.** Every FAIL it
 reports is a defect a real person hit and complained about. `assets/test_check_sheet.py`
-proves the gate bites — 18/18 historical defects caught.
+proves the gate bites — 19 historical defects caught, plus one valid sheet that must NOT
+fail.
 
 Details: **`references/chrome-and-layout.md`** (what the chrome must do and why),
 **`references/persistence.md`** (how the file gets written), **`references/throughput.md`**
@@ -215,7 +216,10 @@ When the human says he is done:
 
 * Commit his decisions file as the source of truth.
 * Write `"frozen": true` with the date and what it means. The sidecar then refuses every write
-  with HTTP 423 and the sheet goes read-only — the freeze is enforced, not announced.
+  with HTTP 423 and the sheet goes read-only — the freeze is enforced, not announced. In
+  `file://` mode the page judges the freeze on the document it **re-reads before each write**,
+  never on a flag cached at boot: a freeze applied while a sheet is open must bite on the next
+  keystroke, not after somebody happens to reload.
 * 🔴 **Make the generator that produced YOUR guesses refuse to run.** It would silently
   overwrite his decisions with the agent's. Require an explicit
   `--i-know-this-overwrites-the-owners-decisions`, and gate it on a key only the sheet writes.
@@ -253,8 +257,17 @@ python3 assets/serve_sheet.py --decisions decisions.json --status
 
 ⚠️ **"The owner said they finished" is not evidence that the file changed.** They finished; the
 plumbing did not. Say so plainly and hand back the recovery — the work is usually still in
-`localStorage`, so *"reopen the sheet and click copy JSON"* recovers it in seconds, and it is
-destroyed only by clearing browsing data.
+`localStorage`, and it is destroyed only by clearing browsing data:
+
+> *Reopen the sheet from the same browser profile. In the brief, next to **"Not saving to a
+> file"**, click **copy JSON** — that is the whole decisions doc; paste it over the decisions
+> file.* (If the clipboard is blocked, the JSON appears in a box below the button; select all
+> and copy it from there.)
+
+🔴 That control only exists because this recovery was written down first and built second, and
+for a while the instruction named a button that was not on the page. **Never hand back a
+recovery you have not clicked.** The button shows whenever the page is holding work in browser
+storage or is not linked to a file, and disappears the moment a real link exists.
 
 ⇒ Build the guard into the tool, not the conversation: a consumer that cannot tell the human's
 decisions from its own suggestions will eventually ship the wrong ones silently.

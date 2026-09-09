@@ -14,7 +14,6 @@ import json
 import os
 import re
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_sheet                                          # noqa: E402
@@ -78,6 +77,20 @@ CASES = [
      lambda h: h.replace("localStorage.setItem(NS + k", "localStorage.setItem('decisions'"),
      "localStorage keys are namespaced per sheet"),
 
+    # The same escape wearing backticks. The check used to match only quote-delimited
+    # literals, so a template key sailed through the gate.
+    ("localStorage key is a bare backtick template",
+     lambda h: h.replace("localStorage.setItem(NS + k",
+                         "localStorage.setItem(`decisions_${k}`"),
+     "localStorage keys are namespaced per sheet"),
+
+    # A sheet whose pictures live on the network is not decidable offline — and the
+    # thumbnail check used to exempt ^https?: outright, so this exited 0.
+    ("thumbnails are remote URLs",
+     lambda h: set_items(h, lambda its: [{**i, "thumb": "https://cdn.example.com/" + i["thumb"]}
+                                         if i.get("thumb") else i for i in its]),
+     "thumbnails are local, not URLs"),
+
     ("pulls a script from a CDN",
      lambda h: h.replace("</head>", '<script src="https://cdn.example.com/x.js"></script></head>'),
      "no CDN or remote assets"),
@@ -117,6 +130,17 @@ CASES = [
 ]
 
 
+# Mutations that change NOTHING a human would care about. A gate that FAILs these is
+# worse than a lax one: five phantom FAILs on a valid sheet teach an agent to ignore it.
+TOLERATED = [
+    ("JSON block attributes in the other order",
+     lambda h: h.replace('<script id="CONFIG" type="application/json">',
+                         '<script type="application/json" id="CONFIG">')
+                .replace('<script id="ITEMS" type="application/json">',
+                         "<script type='application/json'  id='ITEMS'>")),
+]
+
+
 def severity_of(results, label):
     for sev, lab, _ in results:
         if lab == label:
@@ -138,22 +162,28 @@ def main() -> int:
     rows = [(not base_fails, "baseline: the good sheet passes",
              "" if not base_fails else f"already failing: {base_fails}")]
 
-    tmp = tempfile.mkdtemp(prefix="check-sheet-test-")
     # thumbnails are resolved relative to the sheet, so mutate in place beside the real one
     workdir = os.path.dirname(good)
+    broken = os.path.join(workdir, ".broken_test_sheet.html")
 
-    for name, mutate, label in CASES:
-        broken = os.path.join(workdir, ".broken_test_sheet.html")
+    def run(mutated: str):
         try:
             with open(broken, "w", encoding="utf-8") as fh:
-                fh.write(mutate(base))
-            sev = severity_of(check_sheet.check(broken, None), label)
-            rows.append((sev == check_sheet.FAIL, name,
-                         f'"{label}" -> {sev}' if sev != check_sheet.FAIL else ""))
+                fh.write(mutated)
+            return check_sheet.check(broken, None)
         finally:
             if os.path.exists(broken):
                 os.unlink(broken)
-    os.rmdir(tmp)
+
+    for name, mutate, label in CASES:
+        sev = severity_of(run(mutate(base)), label)
+        rows.append((sev == check_sheet.FAIL, name,
+                     f'"{label}" -> {sev}' if sev != check_sheet.FAIL else ""))
+
+    for name, mutate in TOLERATED:
+        fails = [lab for sev, lab, _ in run(mutate(base)) if sev == check_sheet.FAIL]
+        rows.append((not fails, f"no phantom FAIL: {name}",
+                     f"spurious: {fails}" if fails else ""))
 
     print()
     for ok, name, detail in rows:

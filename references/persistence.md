@@ -42,14 +42,25 @@ Responses that are not 200 and what the page must do:
 
 | Code | Meaning | Page behaviour |
 |---|---|---|
-| 409 | truncating write refused | show the message, keep the ops pending, do not clear them |
+| 409 `truncating-write` | this batch clears an implausible number of decided rows | show the message, keep the ops pending — **and offer one explicit "clear them anyway" button that resends the same batch with `force: true`**. Undoing a legitimate bulk apply looks exactly like the bug the guard is for, so without that button the ops sit pending forever and the screen and the file diverge silently. Never send `force` on its own initiative: forcing is a human act |
+| 409 `decisions-not-an-object` | the file's `decisions` key holds a list, a string, something | refuse, and do **not** offer force — the server is protecting content it cannot merge into. Fix or move the file by hand |
 | 423 | file is frozen | go read-only, say so in the header |
 | 403 | bad or missing session token | tell them to use the printed URL |
 | 500 | the file is unreadable or not JSON | refuse to write; never overwrite what you failed to parse |
 
+**The token is not optional on a non-loopback bind.** On WSL the sidecar binds `0.0.0.0`,
+because WSL2's loopback relay cannot be relied on from the Windows browser — so the `?t=` token,
+not the interface, is the only thing keeping the LAN out of the human's decisions (and out of
+`GET` on every file beside the sheet). `--no-token` is therefore **refused** unless the bind host
+is loopback; pass `--host 127.0.0.1` with it if you want it on WSL and accept that the browser
+may not reach it.
+
 The write itself: temp file in the same directory → `fsync` → `os.replace`. On failure it
 retries five times with backoff, then falls back to an in-place write **after copying a
-`.bak`**, and reports which path it took. See `references/cross-platform.md` for why the
+`.bak`**, and reports which path it took. If that `.bak` cannot be made, the write is
+**refused** (500) rather than taken with no backup — an in-place write that dies halfway is the
+one way left to truncate the human's file, and a refusal costs only a batch the page is still
+holding. See `references/cross-platform.md` for why the
 fallback exists.
 
 ## Useful invocations
@@ -120,6 +131,17 @@ means the format drifted and every future diff is noise.
 
 ## localStorage is a cache, not storage
 
-Keep it as the last resort, keep the export/copy-JSON fallback beside it, and **say so loudly in
-the page** when that is where the work is living. Be honest when an API is absent rather than
-pretending. The 71-row incident in SKILL.md §8 is what a quiet fallback costs.
+Keep it as the last resort, keep the export route beside it, and **say so loudly in the page**
+when that is where the work is living. Be honest when an API is absent rather than pretending.
+The 71-row incident in SKILL.md §8 is what a quiet fallback costs.
+
+**The export route, as the template builds it.** A `copy JSON` button sits in the brief inside
+the `#exportbar` panel, shown exactly while the backend is `localStorage` or a `file` backend
+that is not linked, and hidden again the moment a link exists. It copies the *whole* document —
+`sheetId`, posture, criterion, `decisions`, and an `exportedBy: "review-sheet-page"` /
+`exportedAt` pair — in the shape the decisions file wants, so recovery is a paste. It is
+stamped `exportedBy`, never `savedBy`: a clipboard copy is not a save, and must not be able to
+masquerade as one under §8's provenance check. When `navigator.clipboard` is refused (it is, on
+some `file://` pages) the JSON is written into a visible, selected `<textarea>` under the
+button with an instruction to copy it by hand — **a copy button that fails silently is how the
+work gets lost twice**.

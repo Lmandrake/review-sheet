@@ -29,23 +29,17 @@ class Ancestry(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.stack: list[tuple[str, dict]] = []
         self.filter_bar_ancestors: list[str] | None = None
-        self.brief_seen = False
-        self.script_ids: list[str] = []
         self.remote_srcs: list[str] = []
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
         ident, cls = a.get("id", ""), a.get("class", "") or ""
         if tag == "script":
-            if ident:
-                self.script_ids.append(ident)
             src = a.get("src", "")
             if src and re.match(r"^(https?:)?//", src):
                 self.remote_srcs.append(src)
         if tag == "link" and re.match(r"^(https?:)?//", a.get("href", "")):
             self.remote_srcs.append(a["href"])
-        if ident == "brief":
-            self.brief_seen = True
         if "bar" in cls.split() and self.filter_bar_ancestors is None:
             self.filter_bar_ancestors = [i for (_, i) in self.stack]
         if tag not in ("br", "img", "input", "meta", "link", "hr", "source"):
@@ -59,14 +53,23 @@ class Ancestry(HTMLParser):
 
 
 def json_block(html: str, tag_id: str):
-    m = re.search(r'<script\s+id="%s"\s+type="application/json"\s*>(.*?)</script>' % tag_id,
-                  html, re.S)
-    if not m:
-        return None, f'no <script id="{tag_id}" type="application/json"> block'
-    try:
-        return json.loads(m.group(1)), None
-    except json.JSONDecodeError as exc:
-        return None, f"{tag_id} block is not valid JSON: {exc}"
+    """Find <script id=X type=application/json> whatever order its attributes are in.
+
+    An attribute-order-sensitive regex used to miss a perfectly valid sheet and then
+    report five cascading phantom FAILs (no CONFIG -> no posture, no criterion, no
+    options, no rows), which teaches an agent to distrust the gate.
+    """
+    want_id = re.compile(r'\bid\s*=\s*["\']%s["\']' % re.escape(tag_id))
+    want_type = re.compile(r'\btype\s*=\s*["\']application/json["\']')
+    for m in re.finditer(r"<script\b([^>]*)>(.*?)</script>", html, re.S | re.I):
+        attrs = m.group(1)
+        if not (want_id.search(attrs) and want_type.search(attrs)):
+            continue
+        try:
+            return json.loads(m.group(2)), None
+        except json.JSONDecodeError as exc:
+            return None, f"{tag_id} block is not valid JSON: {exc}"
+    return None, f'no <script id="{tag_id}" type="application/json"> block'
 
 
 def check(path: str, decisions_path: str | None) -> list[tuple[str, str, str]]:
@@ -150,11 +153,16 @@ def check(path: str, decisions_path: str | None) -> list[tuple[str, str, str]]:
         "" if remeasure else "new group nodes have no top until you measure again")
 
     # ── 4. storage keys are namespaced (the shared file:// origin) ────────────────────
-    raw_ls = re.findall(r"localStorage\.(?:set|get)Item\(\s*['\"]([^'\"]+)['\"]", html)
-    bare = [k for k in raw_ls if not k.startswith(("rs:", "NS"))]
+    # Look at the whole first ARGUMENT, not just a quoted literal: a backtick template
+    # (`decisions_${id}`) or a concatenation ('decisions' + id) is just as bare, and an
+    # earlier version of this check saw neither because it only matched quotes.
+    ls_args = re.findall(r"localStorage\.(?:set|get)Item\(\s*([^,)]{0,80})", html)
+    namespaced = re.compile(r"""^(NS\b|['"]rs:|['"]\s*\+\s*NS\b|`(\$\{NS\}|rs:))""")
+    bare = [a.strip()[:40] for a in ls_args if not namespaced.match(a.strip())]
     add(FAIL if bare else OK, "localStorage keys are namespaced per sheet",
-        f"bare keys: {bare} — every file:// page shares ONE storage origin, so two sheets "
-        f"opened from disk collide and one review silently eats the other" if bare else "")
+        f"bare keys: {bare} — the key must start with the NS constant or a literal 'rs:'. "
+        f"Every file:// page shares ONE storage origin, so two sheets opened from disk "
+        f"collide and one review silently eats the other" if bare else "")
     if "indexedDB" in html:
         ns_handle = re.search(r"(NS\s*\+\s*['\"]handle|['\"]\s*\+\s*sheetId)", html) is not None
         add(FAIL if not ns_handle else OK, "IndexedDB handle key is namespaced",
@@ -215,16 +223,26 @@ def check(path: str, decisions_path: str | None) -> list[tuple[str, str, str]]:
             f"unknown: {sorted(bad_pre)} not in {sorted(opt_keys)}" if bad_pre else "")
 
         if any(it.get("thumb") for it in items):
-            missing = []
+            missing, remote = [], []
             base = os.path.dirname(os.path.abspath(path))
             for it in items:
                 t = it.get("thumb")
-                if t and not re.match(r"^(https?:|data:)", t) \
-                        and not os.path.exists(os.path.join(base, t)):
+                if not t:
+                    continue
+                if re.match(r"^(https?:)?//|^https?:", t):
+                    remote.append(t)
+                elif not re.match(r"^data:", t) and not os.path.exists(os.path.join(base, t)):
                     missing.append(t)
             add(FAIL if missing else OK, "thumbnails resolve on disk",
                 f"{len(missing)} missing, e.g. {missing[:3]}" if missing else
                 f"{sum(1 for it in items if it.get('thumb'))} images")
+            # A sheet must be decidable OFFLINE. A remote thumbnail is a row that renders
+            # blank on a plane, behind a proxy, or the day the host goes away — and for an
+            # image row the picture IS the consequence, so a blank thumb is a blank row.
+            add(FAIL if remote else OK, "thumbnails are local, not URLs",
+                f"{len(remote)} remote, e.g. {remote[:3]} — copy them next to the sheet (or "
+                f"inline them as data: URIs); these are opened from disk, often offline"
+                if remote else "")
 
     # ── 6b. a decisions file is actually there to review ──────────────────────────────
     # check() used to pass clean whenever it was simply never HANDED a --decisions path —

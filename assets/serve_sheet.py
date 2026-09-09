@@ -56,6 +56,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 STAMP_BY = "review-sheet-sidecar"
 MAX_BODY = 64 * 1024 * 1024
+LOOPBACK = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
+# Keys this tool reads, or the skill requires the file to carry. Anything else in the
+# file belongs to somebody else and gets reported so it is not silently depended on.
+KNOWN_TOP_LEVEL = {"decisions", "savedBy", "savedAt", "writeCount", "decidedCount",
+                   "frozen", "frozenOn", "frozenBy", "frozenMeaning",
+                   "posture", "criterion"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -150,6 +156,7 @@ class DecisionsFile:
         self.lock = threading.Lock()
         self.rev = 0
         self._last_hash = ""
+        self._ours = ""                 # hash of the last payload WE wrote; "" = never
 
     # ---- reading
 
@@ -197,13 +204,21 @@ class DecisionsFile:
 
         with self.lock:
             doc = self.read()                       # always re-read: another tab
-            external = bool(self._last_hash and self._last_hash != getattr(self, "_ours", ""))
+            # Only a file we have written before can be seen to change UNDER us. Comparing
+            # against an unset _ours made every session's first write report a phantom
+            # external edit, which trains the human to ignore the one warning that matters.
+            external = bool(self._ours and self._last_hash and self._last_hash != self._ours)
             if doc.get("frozen") is True:
                 raise Frozen(doc.get("frozenOn"), doc.get("frozenMeaning"))
 
             decisions = doc.get("decisions")
-            if not isinstance(decisions, dict):
+            if decisions is None:
                 decisions = {}
+            if not isinstance(decisions, dict):
+                # Something else's schema, or a file half-written by another tool. Replacing
+                # it with {} silently destroys whatever it held, and the truncation guard
+                # cannot see it because before_decided reads 0. Refuse, like a parse error.
+                raise Corrupt(type(decisions).__name__)
 
             before_decided = sum(1 for v in decisions.values() if _is_decided(v))
 
@@ -257,11 +272,32 @@ class Truncating(Exception):
         self.clearing, self.before, self.limit = clearing, before, limit
 
 
+class Corrupt(Exception):
+    """The file's "decisions" key is not an object — refuse rather than replace it."""
+
+    def __init__(self, found):
+        super().__init__(f'"decisions" is a {found}, not an object')
+        self.found = found
+
+
 def _is_decided(value) -> bool:
     if not isinstance(value, dict):
         return bool(value)
     d = value.get("decision")
     return d is not None and d != "" and d != "undecided"
+
+
+def _is_override(value) -> bool:
+    """A row where the human contradicted the pre-fill.
+
+    A CLEARED row is not one. {"decision": "", "prefill": "keep"} means "I unset this",
+    not "I chose something else"; counting it inflates the digest and paints the amber
+    override rail on a row carrying no decision at all.
+    """
+    if not isinstance(value, dict) or not _is_decided(value):
+        return False
+    pre = value.get("prefill")
+    return pre not in (None, "") and value.get("decision") != pre
 
 
 def _durable_write(path: str, payload: bytes) -> str:
@@ -289,13 +325,19 @@ def _durable_write(path: str, payload: bytes) -> str:
             except OSError as exc:                    # DrvFs: file held by Windows
                 last = exc
                 time.sleep(0.1 * (attempt + 1))
-        # Fall back rather than lose the write. Keep a .bak first: an in-place
-        # write that dies halfway is the one way to truncate the human's file.
-        try:
-            if os.path.exists(path):
+        # Fall back rather than lose the write. Keep a .bak FIRST: an in-place write
+        # that dies halfway is the one way to truncate the human's file — so if the
+        # backup cannot be made, do not take the risky path at all. Refusing costs one
+        # unsaved batch (the page keeps it pending); proceeding can cost the review.
+        if os.path.exists(path):
+            try:
                 shutil.copy2(path, path + ".bak")
-        except OSError:
-            pass
+            except OSError as exc:
+                raise RuntimeError(
+                    f"os.replace failed ({type(last).__name__}) and the .bak copy failed "
+                    f"too ({exc}). Refusing an in-place write with no backup — close "
+                    f"whatever holds {path} open and retry; your decisions are still "
+                    f"pending in the page.") from exc
         with open(path, "wb") as fh:
             fh.write(payload)
             fh.flush()
@@ -315,12 +357,9 @@ def overrides_of(store: DecisionsFile) -> list[dict]:
     decisions = doc.get("decisions") if isinstance(doc.get("decisions"), dict) else {}
     out = []
     for key, value in sorted(decisions.items()):
-        if not isinstance(value, dict):
+        if not _is_override(value):
             continue
-        pre = value.get("prefill")
-        if pre in (None, "") or value.get("decision") == pre:
-            continue
-        out.append({"id": key, "from": pre, "to": value.get("decision"),
+        out.append({"id": key, "from": value.get("prefill"), "to": value.get("decision"),
                     "note": str(value.get("note") or "").strip()})
     return out
 
@@ -367,9 +406,7 @@ def status_of(store: DecisionsFile, sheet: str | None = None) -> dict:
         return {"file": native_path(store.path), "error": str(exc)}
     decisions = doc.get("decisions") if isinstance(doc.get("decisions"), dict) else {}
     decided = [v for v in decisions.values() if _is_decided(v)]
-    overrides = [v for v in decisions.values()
-                 if isinstance(v, dict) and v.get("prefill") not in (None, "")
-                 and v.get("decision") != v.get("prefill")]
+    overrides = [v for v in decisions.values() if _is_override(v)]
     noted = [v for v in decisions.values()
              if isinstance(v, dict) and str(v.get("note") or "").strip()]
     return {
@@ -389,9 +426,10 @@ def status_of(store: DecisionsFile, sheet: str | None = None) -> dict:
         "overrides": len(overrides),
         "notes": len(noted),
         "frozen": doc.get("frozen") is True,
-        "unknownTopLevelKeys": sorted(k for k in doc
-                                      if k not in {"decisions", "savedBy", "savedAt",
-                                                   "writeCount", "decidedCount"}),
+        # "Unknown" means no tool here reads it — a key this file carries for someone
+        # else. The freeze markers, the posture and the criterion are all read by this
+        # tool or mandated by the skill, so listing them was noise that hid the real ones.
+        "unknownTopLevelKeys": sorted(k for k in doc if k not in KNOWN_TOP_LEVEL),
     }
 
 
@@ -555,6 +593,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(423, {"error": "frozen", "frozenOn": exc.on,
                                     "frozenMeaning": exc.meaning,
                                     "hint": "the decisions file is frozen; the sheet is read-only"})
+        except Corrupt as exc:
+            return self._json(409, {"error": "decisions-not-an-object", "found": exc.found,
+                                    "hint": f'the file\'s "decisions" key holds a {exc.found}, '
+                                            f"not an object of {{itemId: decision}}. Refusing "
+                                            f"to write — replacing it would destroy whatever "
+                                            f"it holds. Fix or move the file."})
         except Truncating as exc:
             return self._json(409, {"error": "truncating-write", "clearing": exc.clearing,
                                     "wasDecided": exc.before, "limit": exc.limit,
@@ -649,6 +693,8 @@ def selftest() -> int:
           f"rows={len(doc['decisions'])}")
     check(doc.get("savedBy") == STAMP_BY and doc.get("writeCount") == 1,
           "server stamped provenance", f"writeCount={doc.get('writeCount')}")
+    check(res["externalChange"] is False,
+          "the first write of a session is NOT reported as an external edit")
     check(status_of(store)["touchedBySheet"] is True, "status now reports a real review")
     check(status_of(store)["overrides"] == 1, "override detected against prefill")
     check(res["writeMode"].startswith("atomic") or res["writeMode"].startswith("in-place"),
@@ -663,6 +709,27 @@ def selftest() -> int:
     check(len(store.read()["decisions"]) == 40, "file intact after the refusal")
     store.write_ops({f"i{n}": {"decision": ""} for n in range(30)}, force=True)
     check(status_of(store)["decided"] == 10, "force:true still allows a deliberate mass clear")
+
+    # A cleared row is not a disagreement. Counting {"decision":"", "prefill":"keep"} as an
+    # override inflates the digest and paints the amber rail on an undecided row.
+    store.write_ops({"i7": {"decision": "", "prefill": "keep"}}, force=True)
+    st = status_of(store)
+    check(st["overrides"] == 0 and not any(o["id"] == "i7" for o in overrides_of(store)),
+          "a CLEARED row is not counted as an override", f"overrides={st['overrides']}")
+
+    # A "decisions" key that is not an object must be refused, not replaced with {}: the
+    # truncation guard cannot see it (before_decided reads 0) and the content is gone.
+    cpath = os.path.join(tmp, "corrupt.json")
+    with open(cpath, "w", encoding="utf-8") as fh:
+        json.dump({"decisions": [{"id": "i0", "decision": "keep"}] * 30}, fh)
+    cstore = DecisionsFile(cpath)
+    try:
+        cstore.write_ops({"i0": {"decision": "cut"}})
+        check(False, "a non-object 'decisions' key is refused, not replaced")
+    except Corrupt as exc:
+        check(True, "a non-object 'decisions' key is refused, not replaced", exc.found)
+    with open(cpath, "r", encoding="utf-8") as fh:
+        check(len(json.load(fh)["decisions"]) == 30, "the odd file was left exactly as found")
 
     doc = store.read(); doc["frozen"] = True
     with open(dpath, "w", encoding="utf-8") as fh:
@@ -716,6 +783,17 @@ def selftest() -> int:
             check(False, "path traversal blocked")
         except urllib.error.HTTPError as exc:
             check(exc.code in (403, 404), "path traversal blocked", f"HTTP {exc.code}")
+
+        # --no-token used to be documented "(not on WSL)" and enforced nowhere, so on WSL —
+        # where the bind is 0.0.0.0 — it published the decisions file and the sheet's whole
+        # directory to the LAN, writes included.
+        proc = subprocess.run([sys.executable, os.path.abspath(__file__),
+                               "--sheet", spath, "--decisions", dpath,
+                               "--no-token", "--host", "0.0.0.0", "--no-open"],
+                              capture_output=True, timeout=30)
+        check(proc.returncode == 2 and b"--no-token refused" in proc.stderr,
+              "--no-token is refused when the bind host is not loopback",
+              f"exit {proc.returncode}")
     finally:
         httpd.shutdown()
         shutil.rmtree(tmp, ignore_errors=True)
@@ -740,7 +818,8 @@ def main() -> int:
     ap.add_argument("--decisions", help="the decisions .json this sheet owns")
     ap.add_argument("--port", type=int, default=0, help="0 picks a free port (default)")
     ap.add_argument("--host", default=None, help="default: 127.0.0.1, or 0.0.0.0 on WSL")
-    ap.add_argument("--no-token", action="store_true", help="disable the session token (not on WSL)")
+    ap.add_argument("--no-token", action="store_true",
+                    help="disable the session token — refused unless the bind host is loopback")
     ap.add_argument("--no-open", action="store_true", help="do not launch a browser")
     ap.add_argument("--status", action="store_true", help="print the decisions file's status and exit")
     ap.add_argument("--overrides", action="store_true",
@@ -779,9 +858,22 @@ def main() -> int:
     Ctx.sheet = os.path.abspath(args.sheet)
     Ctx.root = os.path.dirname(Ctx.sheet) or os.path.abspath(".")
     Ctx.store = store
-    Ctx.token = "" if args.no_token else secrets.token_urlsafe(16)
 
     host = args.host or default_host()
+    # The token is not decoration: on WSL the bind is 0.0.0.0 because the loopback relay
+    # is unreliable, so with --no-token anyone on the LAN could read the sheet's directory
+    # and POST force=1 mass clears into the human's decisions. Refuse rather than quietly
+    # widen the hole — the help text used to say "(not on WSL)" and enforce nothing.
+    if args.no_token and host not in LOOPBACK:
+        print(f"--no-token refused: the bind host is {host}, not loopback, so nothing "
+              f"would gate writes to the decisions file.\n"
+              f"  Either drop --no-token (the printed URL carries ?t=<token>), or pass "
+              f"--host 127.0.0.1 explicitly\n"
+              f"  and accept that WSL2's loopback relay is sometimes unreachable from the "
+              f"Windows browser.", file=sys.stderr)
+        return 2
+    Ctx.token = "" if args.no_token else secrets.token_urlsafe(16)
+
     try:
         httpd = ThreadingHTTPServer((host, args.port), Handler)
     except OSError as exc:
