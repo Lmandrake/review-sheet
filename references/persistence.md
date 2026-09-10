@@ -4,7 +4,10 @@ Read this when wiring a sheet's save path, when a review's work has gone missing
 deciding between the sidecar and the browser file APIs.
 
 **The short version: run `assets/serve_sheet.py` and stop thinking about it.** The rest of this
-file is why, and what to do when you cannot.
+file is why, and what to do when you cannot. Serving is the ruled default delivery (owner,
+2026-09-09 — SKILL.md §6): the sidecar opens the browser and the tokened URL is what you hand
+over. Everything below the fallback heading is for a machine where a sidecar genuinely cannot
+run, and reaching for it is said out loud, never chosen quietly.
 
 ---
 

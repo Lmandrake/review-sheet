@@ -24,6 +24,8 @@ cp assets/sheet_template.html mysheet.html     # a COMPLETE sheet. Fill in two J
 python3 make_prefill.py                        # your generator: writes decisions.json
 python3 assets/check_sheet.py mysheet.html --decisions decisions.json   # the gate
 python3 assets/serve_sheet.py --sheet mysheet.html --decisions decisions.json
+#   ^ this IS the delivery: it opens the human's browser on a tokened URL.
+#     Never hand a file path to open instead (owner's ruling — see §6).
 ```
 
 `assets/sheet_template.html` is a whole working sheet. **You fill in exactly two things** —
@@ -178,13 +180,22 @@ A whitelist and a blacklist are the same UI and opposite meanings.
 * Distinguish **rejected** (looked, said no) from **undecided** (never looked) even when both
   strip — the human needs to know which rows he has actually seen.
 
-## 6. 🔴 Persistence — let the sidecar own the file
+## 6. 🔴 Persistence — let the sidecar own the file. Serving IS the delivery.
 
 `localStorage` is where work goes to die. It is per-browser, per-profile, wiped by "clear
 browsing data", and — measured — **shared across every `file://` page on the machine**.
 
-⭐ **Run `assets/serve_sheet.py`.** It removes the picker entirely, and it moves four rules out
-of "the agent must remember" and into plumbing that enforces them:
+🔴 **Run `assets/serve_sheet.py`, every time, as the default — this is a ruling, not a
+preference.** Owner, 2026-09-09, on receiving a served sheet after sessions of file-path
+handovers: *"OMG you're not making me cut/paste files anymore! I love this!"* — and he ruled
+it the standing default on the spot. The sidecar opens their browser itself; **the tokened
+URL is the delivery.** Handing over a file path to open, a path to paste, or a picker to
+navigate is the defect this tool exists to delete — the `file://` fallback
+(`references/persistence.md`) is for a machine where a sidecar genuinely cannot run, and
+using it is something you say out loud, never a quiet choice.
+
+It also removes the picker entirely, and it moves four rules out of "the agent must
+remember" and into plumbing that enforces them:
 
 | Rule | If the page owns the file | With the sidecar |
 |---|---|---|
@@ -332,7 +343,9 @@ Do not tell the human the sheet is ready until every line is true.
 - [ ] `CONFIG.invented` is set — to a real list, or to `[]` on purpose.
 - [ ] `CONFIG.criterion` names what you actually sorted by, including what it cannot rank.
 - [ ] Posture is in the page **and** in the decisions file.
-- [ ] The sidecar is running, or the fallback path is printed and copyable.
+- [ ] The sidecar is running and the human's browser is open on the tokened URL — that IS the
+      delivery. A `file://` path was handed over only if a sidecar genuinely could not run,
+      and you said so out loud.
 - [ ] You have said, in chat, how many rows you decided and which ones you are least sure of.
 - [ ] You have **not** asked the human to paste a path, retype a filename, or hunt for a folder.
 - [ ] You **served it and clicked one control of each kind in a real browser**, and read the
@@ -352,6 +365,7 @@ Do not tell the human the sheet is ready until every line is true.
 | "The human said they're done, so I'll commit the file" | Check `touchedBySheet`. They finished; the plumbing may not have. |
 | "Zero overrides means I got the criterion right" | It equally means disagreeing was too hard. The file cannot tell you which. |
 | "I'll ask them to save it in the right folder" | A path they retype is a path they get wrong. Run the sidecar. |
+| "I'll hand them the sheet's file path to open" | That is the cut/paste dance the sidecar deletes. Serving is the ruled default (owner, 2026-09-09); a file path is the last resort, said out loud, never a delivery. |
 | "I'll pre-fill nothing so I don't bias them" | A blank sheet is a chore you handed back. Decide, then let them disagree. |
 | "The metric ranked these, so the order is the answer" | A metric ranks quality. It cannot rank worth. |
 | "The tests pass, so the buttons work" | A rendering test proves markup, a protocol test proves the endpoint. Neither runs the handler between them. Click one. |
