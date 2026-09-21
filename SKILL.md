@@ -325,6 +325,61 @@ were pinned with tests asserting the contract *from both sides* — the markup's
 script's selector — and each guard was verified by putting the original bug back and watching the
 suite go red. A regression test you have never seen fail is a test you are trusting on faith.
 
+## 8b. 🔴 "Touched" is not "ruled" — one required key says which
+
+§8 proves the sidecar was WRITTEN TO. It does not prove a human RULED — a 71-row
+file with `savedBy`/`writeCount` could equally be a real review or an agent
+smoke-testing the wiring. Measured 2026-09-21 (`SHEET_REVIEWED_FLAG_UNIFORM_1`): 13
+sidecars in one project's `Transient/` declared "has a human ruled on this" in **7
+different shapes** — `reviewed_by`/`owner_said`, `approvedBy`/`approvedAt`/
+`approvedSaid`, `savedBy`+`writeCount` alone, `decidedCount`, `generatedBy`, a
+sentence buried in free-text `criterion`, or nothing at all. A consumer checking one
+key was right for a handful and silently wrong for the rest — which is how a prefill
+sheet nobody had opened got read as owner-approved and collided with a blanket ruling
+given a day later.
+
+**Every sidecar carries one required key, written by whoever creates or rules on it:**
+
+```json
+"reviewStatus": {
+    "state":    "ruled" | "prefill" | "unknown",
+    "by":       "<who ruled — a name, or null>",
+    "at":       "<ISO 8601 date/datetime, or null>",
+    "evidence": "<one line: which fact makes this true>"
+}
+```
+
+* **A generator writes it at birth**, `state="prefill"`, never "ruled" and never
+  omitted. "I forgot to write it" and "nobody has reviewed this" must read
+  identically to a consumer: both are UNREVIEWED. `demo/make_demo.py` does this.
+* **Whoever records a real ruling** — a sidecar save session, a verbal ruling an
+  agent transcribes, a freeze — flips it to `"ruled"` and fills in `by`/`at`/
+  `evidence`. A blanket ruling ("yes, replace everything") still counts as ruled;
+  say so in `evidence` rather than implying it was row-by-row.
+* ⛔ **Never infer `"ruled"` from row content.** `decision == prefill` on every row
+  is exactly what a genuine all-keep ruling looks like too — only provenance
+  (a name, a quote, an unforgeable plumbing stamp) can tell them apart. If the
+  provenance is genuinely ambiguous or contradictory, write `"unknown"` and say why
+  in `evidence` — do not guess "ruled" to be helpful.
+* A sidecar with **no `reviewStatus` key at all** is UNREVIEWED, full stop.
+
+**One reader, every consumer uses it — `assets/review_status.py`:**
+
+```python
+from review_status import get_review_status, UnreviewedSheetError
+try:
+    state = get_review_status("Transient/some_sheet.decisions.json")   # "ruled" | "prefill"
+except UnreviewedSheetError as exc:
+    ...refuse. Do not treat this sheet's rows as decisions...
+```
+
+🔴 **The refusal is the deliverable, not the return value.** `get_review_status()`
+never hands back the string `"unknown"` for a caller to forget to check — it raises.
+A reader that quietly returns "probably ruled" on missing or ambiguous provenance
+rebuilds the exact defect this key exists to close. `check_sheet.py` WARNs (does not
+yet FAIL — most sidecars predate this key) when `reviewStatus` is missing or
+malformed, naming `review_status.get_review_status()` as what will refuse it.
+
 ## 9. What to ask the human, and when
 
 * Ask for the **posture** before generating — whitelist vs blacklist changes everything.
@@ -343,6 +398,8 @@ Do not tell the human the sheet is ready until every line is true.
 - [ ] `CONFIG.invented` is set — to a real list, or to `[]` on purpose.
 - [ ] `CONFIG.criterion` names what you actually sorted by, including what it cannot rank.
 - [ ] Posture is in the page **and** in the decisions file.
+- [ ] The decisions file carries `reviewStatus` with `state="prefill"` (§8b) — never
+      omitted, never `"ruled"` before a human has actually ruled.
 - [ ] The sidecar is running and the human's browser is open on the tokened URL — that IS the
       delivery. A `file://` path was handed over only if a sidecar genuinely could not run,
       and you said so out loud.

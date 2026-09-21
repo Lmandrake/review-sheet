@@ -320,6 +320,20 @@ def check(path: str, decisions_path: str | None) -> list[tuple[str, str, str]]:
             if doc.get("frozen"):
                 add(WARN, "this decisions file is FROZEN", "the sheet should be read-only")
 
+            # SHEET_REVIEWED_FLAG_UNIFORM_1: one required key says ruled/prefill/unknown.
+            # A missing or malformed one reads as UNREVIEWED to review_status.py, never
+            # as neutral — so a generator that forgot it is a defect, not a style choice.
+            rs = doc.get("reviewStatus")
+            if not isinstance(rs, dict) or rs.get("state") not in ("ruled", "prefill", "unknown"):
+                add(WARN, "no reviewStatus key on the decisions file",
+                    "a consumer using review_status.get_review_status() will refuse this "
+                    "sheet as UNREVIEWED — the generator should write reviewStatus at birth "
+                    "(state=\"prefill\"); see SHEET_REVIEWED_FLAG_UNIFORM_1")
+            elif rs.get("state") == "unknown":
+                add(WARN, "reviewStatus is UNKNOWN", rs.get("evidence") or "")
+            else:
+                add(OK, "  reviewStatus", f"{rs.get('state')} (by={rs.get('by')!r})")
+
     return out
 
 

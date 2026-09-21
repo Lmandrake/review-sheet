@@ -181,6 +181,15 @@ def build() -> tuple[list[dict], dict]:
         "posture": "whitelist",
         "criterion": "sprite resolution x contrast x saturation — which ranks quality, not worth",
         "generatedBy": "make_demo.py",
+        # SHEET_REVIEWED_FLAG_UNIFORM_1: every sidecar is BORN with this key. A generator
+        # writes state="prefill" — never "ruled", never omitted — so a consumer that reads
+        # review_status.get_review_status() refuses instead of guessing.
+        "reviewStatus": {
+            "state": "prefill",
+            "by": None,
+            "at": "2026-08-31",
+            "evidence": "make_demo.py agent pre-fill — nobody has reviewed this demo sheet",
+        },
         "someOtherToolsKey": {"do not": "lose me"},
         "decisions": {it["id"]: {"decision": it["prefill"], "prefill": it["prefill"], "note": ""}
                       for it in items},

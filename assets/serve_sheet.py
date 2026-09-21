@@ -61,7 +61,7 @@ LOOPBACK = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
 # file belongs to somebody else and gets reported so it is not silently depended on.
 KNOWN_TOP_LEVEL = {"decisions", "savedBy", "savedAt", "writeCount", "decidedCount",
                    "frozen", "frozenOn", "frozenBy", "frozenMeaning",
-                   "posture", "criterion"}
+                   "posture", "criterion", "reviewStatus"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -426,6 +426,9 @@ def status_of(store: DecisionsFile, sheet: str | None = None) -> dict:
         "overrides": len(overrides),
         "notes": len(noted),
         "frozen": doc.get("frozen") is True,
+        # SHEET_REVIEWED_FLAG_UNIFORM_1: the one required ruled/prefill/unknown key.
+        # Read raw here (never raise) so `--status` can always show it.
+        "reviewStatus": doc.get("reviewStatus"),
         # "Unknown" means no tool here reads it — a key this file carries for someone
         # else. The freeze markers, the posture and the criterion are all read by this
         # tool or mandated by the skill, so listing them was noise that hid the real ones.
