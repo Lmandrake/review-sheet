@@ -75,6 +75,14 @@ overrule you. Owner, on being handed a pre-filled sheet: *"I'll just review."*
   filter. 18 flagged rows out of 449 carried nearly all the real judgement.
 * **Leave genuinely open calls undecided ON PURPOSE**, with the note saying why, so they stand
   out from the ones you simply worked through.
+* 🔴 **A scale/size panel on the sheet is a MEASUREMENT, and it is worth exactly as much as
+  the resolver that produced it.** A species sheet drew several plants at the vanilla-fallback
+  size ("inherited") while their real defs set sizes several times larger; the owner rejected
+  the resulting too-small panels before anyone traced it back to the resolver silently falling
+  back on a value it never actually read. **Verify one donor row's number against the raw def
+  before serving a whole batch, and print the SOURCE of every measured value on the row** — a
+  size, count or field that a reader cannot tell was measured from a fallback is a claim, not
+  a measurement.
 
 ## 2. 🔑 Say what each entry DOES, not what it is
 
@@ -198,6 +206,12 @@ A whitelist and a blacklist are the same UI and opposite meanings.
 * Distinguish **rejected** (looked, said no) from **undecided** (never looked) even when both
   strip — the human needs to know which rows he has actually seen.
 
+⛔ **A dropdown must never REMOVE an option to enforce the owner's own stated policy.** A
+biome-placement sheet dropped "commission-first" biomes from the place dropdown entirely to
+steer toward the cheaper choice, and the placement he actually wanted had to go through a
+free-text note instead of the control built for it. Mark a discouraged option (grey it out, add
+a cost badge, sort it last) — never hide it. The picker is his, not the sheet's policy engine.
+
 ## 6. 🔴 Persistence — let the sidecar own the file. Serving IS the delivery.
 
 `localStorage` is where work goes to die. It is per-browser, per-profile, wiped by "clear
@@ -211,6 +225,12 @@ URL is the delivery.** Handing over a file path to open, a path to paste, or a p
 navigate is the defect this tool exists to delete — the `file://` fallback
 (`references/persistence.md`) is for a machine where a sidecar genuinely cannot run, and
 using it is something you say out loud, never a quiet choice.
+
+🔴 **Never restart a review sidecar after handing the owner its URL.** The port is part of the
+browser origin, so each restart orphans his open tab and strands whatever he ruled in that
+origin's `localStorage` — one incident cost 9 rulings nearly lost. Recovery is re-binding the
+exact same port with `--no-token` (only safe because `if not Ctx.token: return True`), not
+telling him to reopen the sheet (2026-09-15).
 
 It also removes the picker entirely, and it moves four rules out of "the agent must
 remember" and into plumbing that enforces them:
@@ -373,7 +393,10 @@ given a day later.
 * **Whoever records a real ruling** — a sidecar save session, a verbal ruling an
   agent transcribes, a freeze — flips it to `"ruled"` and fills in `by`/`at`/
   `evidence`. A blanket ruling ("yes, replace everything") still counts as ruled;
-  say so in `evidence` rather than implying it was row-by-row.
+  say so in `evidence` rather than implying it was row-by-row. 🔴 **A blanket
+  ruling over a whole sheet must never be recorded as though it were a normal
+  row-by-row sitting** — stamp the route it actually took (`apply_blanket_ruling.py`)
+  so a later reader does not conclude every row was individually looked at.
 * ⛔ **Never infer `"ruled"` from row content.** `decision == prefill` on every row
   is exactly what a genuine all-keep ruling looks like too — only provenance
   (a name, a quote, an unforgeable plumbing stamp) can tell them apart. If the
