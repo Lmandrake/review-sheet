@@ -32,6 +32,15 @@ python3 assets/serve_sheet.py --sheet mysheet.html --decisions decisions.json
 `<script id="CONFIG">` (brief, posture, criterion, options) and `<script id="ITEMS">` (the
 rows) — plus an optional `window.itemBody` if the default row is wrong for your data.
 
+🔴 **The template ships that optional `<script id="RENDER">` hook INSIDE an HTML
+comment** (the "FILL IN #3 (optional)" block). Filling it in place, without also
+moving it out of the surrounding `<!-- … -->`, leaves your row renderer as inert
+text no scripted check can see — the sheet still renders "fine", with only the
+default row (thumbnail + effect line) showing, and the cost is silent: one
+three-facing art sheet shipped with only the east thumb loading because of
+exactly this (2026-09-15). **Inject a live `<script>` outside the comment**, not
+one nested inside it.
+
 🔴 **Do not write the chrome yourself.** The previous version of this asset was a ~100-line
 fragment saying "wire the three marked hooks", and agents rebuilt the page from scratch and
 dropped one every time. That is why the chrome is no longer yours to author, and why
@@ -85,6 +94,15 @@ junk, blocks siege raids"*. That is decidable; *"a headwater is where a river be
 * For an image, **the picture IS the consequence** — a thumbnail earns the row its place, and
   demanding a prose line there is noise. `check_sheet.py` fails a sheet only on rows carrying
   neither.
+* 🔴 **Mining a value out of raw def XML by TEXT-matching a tag truncates on nested
+  tags of the same name.** A generator reading `<ThingDef>…</ThingDef>` with a
+  regex/substring match stops at the FIRST closing tag it sees, which can be a
+  nested one (e.g. AlphaBiomes puts `<descriptionHyperlinks><ThingDef>…</ThingDef>
+  </descriptionHyperlinks>` before the field you actually want) — 11 of 13 rows on
+  one sheet silently read a field as ABSENT and recorded the vanilla fallback AS a
+  measurement. Parse the XML properly, and **resolve through your own mod's
+  patches too** — the game reads the patched value, not the donor's shipped one
+  (2026-09-19).
 
 ## 3. 🔴 Your ranking criterion is probably not theirs — say so, and make disagreeing cheap
 
