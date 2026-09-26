@@ -124,10 +124,10 @@ def default_host() -> str:
 def open_browser(url: str) -> str:
     """Best effort. Returns the launcher used, or '' if the human must click."""
     if is_wsl():
-        for cmd in (["wslview", url],
-                    ["explorer.exe", url],
-                    ["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{url}'"],
-                    ["cmd.exe", "/c", "start", "", url]):
+        # PowerShell first. explorer.exe cannot parse a URL with a ?query and opens a
+        # folder instead (owner-observed, 2026-09-26); wslview often wraps explorer.exe.
+        for cmd in (["powershell.exe", "-NoProfile", "-Command", f"Start-Process '{url}'"],
+                    ["wslview", url]):
             try:
                 subprocess.run(cmd, timeout=10, check=False,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
