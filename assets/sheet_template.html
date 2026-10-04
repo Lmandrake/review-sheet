@@ -560,6 +560,7 @@ function setDecision(id, key, opts = {}) {
   const rec = DEC[id] || (DEC[id] = { decision: '', note: '', prefill: prefillOf(it) });
   if (rec.prefill === undefined) rec.prefill = prefillOf(it);
   rec.decision = (rec.decision === key && opts.toggle) ? '' : key;
+  rec.decidedAt = new Date().toISOString();      // a human act: prefilled vs yours is countable
   if (!opts.noUndo) { undoStack.push({ entries: [{ id, before }] }); redoStack.length = 0; }
   queue(id);
   patchRow(id);
@@ -640,7 +641,10 @@ function card(it) {
   const thumb = it.thumb
     ? `<div class="thumb" data-zoom="${esc(it.thumb)}" data-cap="${esc(it.label || it.id)}"><img src="${esc(it.thumb)}" loading="lazy" decoding="async" alt=""></div>`
     : '';
-  const opts = OPTS.map(op => `<button data-set="${esc(op.key)}" class="${op.key === key ? 'sel' : ''}"`
+  /* window.itemOptions(it) -> option list for THIS row (default: all). A sheet whose options
+     differ per row (column letters) shows only the ones that row has. */
+  const rowOpts = (window.itemOptions && window.itemOptions(it)) || OPTS;
+  const opts = rowOpts.map(op => `<button data-set="${esc(op.key)}" class="${op.key === key ? 'sel' : ''}"`
       + `${op.key === key ? ` style="background:${esc(op.color)}"` : ''}`
       + ` title="${esc(op.label)} (${esc(op.hotkey || '')})">${esc(op.label)}</button>`).join('');
   return `<div class="row${ovr ? ' override' : ''}" data-id="${esc(it.id)}"${o ? ` style="color:${esc(o.color)}"` : ''}>
@@ -684,7 +688,9 @@ function render() {
   for (const it of shown) { if (!groups.has(it.group)) groups.set(it.group, []); groups.get(it.group).push(it); }
   let html = '';
   for (const [name, items] of groups) {
-    const bulk = OPTS.map(op => `<button class="btn" data-bulk="${esc(op.key)}" data-group="${esc(name)}">all ${esc(op.label.toLowerCase())}</button>`).join('');
+    /* an option with bulk:false gets no "all X" button (e.g. per-row column letters, where
+       the same key means a different picture on every row) */
+    const bulk = OPTS.filter(op => op.bulk !== false).map(op => `<button class="btn" data-bulk="${esc(op.key)}" data-group="${esc(name)}">all ${esc(op.label.toLowerCase())}</button>`).join('');
     /* de-stick groups of <=3: a sticky label sits on top of the only row in a group of
        one, which makes it unreadable and unclickable. */
     html += `<div class="gh${items.length <= 3 ? ' nostick' : ''}">${esc(name)}`
@@ -733,11 +739,13 @@ addEventListener('resize', measure);
    ───────────────────────────────────────────────────────────────────────────────────── */
 function paintCounts() {
   const total = ITEMS.length;
-  let decided = 0, ovr = 0, noted = 0, contested = 0;
+  let decided = 0, ovr = 0, noted = 0, contested = 0, yours = 0;
   const per = {};
   for (const it of ITEMS) {
     const k = decisionOf(it.id);
-    if (k) { decided++; per[k] = (per[k] || 0) + 1; }
+    if (k) { decided++; per[k] = (per[k] || 0) + 1;
+      const d = decOf(it.id);
+      if (d.decidedAt || isOverride(it.id) || prefillOf(it) == null) yours++; }
     if (isOverride(it.id)) ovr++;
     if (String((decOf(it.id) || {}).note || '').trim()) noted++;
     if (it.contested && !isDecided(it.id)) contested++;
@@ -745,7 +753,9 @@ function paintCounts() {
   const inn = OPTS.filter(o => o.counts === 'in').reduce((n, o) => n + (per[o.key] || 0), 0);
   const out = OPTS.filter(o => o.counts === 'out').reduce((n, o) => n + (per[o.key] || 0), 0);
   el('progress').innerHTML =
-    `<b>${decided}</b>/${total} decided · <b>${total - decided}</b> left`
+    `<b>${yours}</b>/${total} decided by you`
+    + (decided - yours ? ` · <b>${decided - yours}</b> still the agent's prefill` : '')
+    + ` · <b>${total - decided}</b> empty`
     + (OPTS.some(o => o.counts) ? ` · ${inn} in · ${out} stripped` : '')
     + ` · ${ovr} overruled · ${noted} noted`
     + (shown.length !== total ? ` · showing ${shown.length}` : '')
@@ -1037,7 +1047,7 @@ async function boot() {
   el('subtitle').textContent = CFG.subtitle || '';
   document.title = CFG.title || 'Review sheet';
   el('briefBody').innerHTML = (CFG.briefHtml || '')
-    + (CFG.criterion ? `<div class="crit">⭐ Ranked by: ${esc(CFG.criterion)}</div>` : '');
+    + (CFG.criterion ? `<div class="crit">Ranked by: ${esc(CFG.criterion)}</div>` : '');
 
   /* Any rule the agent INVENTED goes in its own panel, stated plainly. An invented premise
      presented as a finding is the most expensive mistake this format makes. */
