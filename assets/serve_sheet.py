@@ -499,6 +499,11 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, (json.dumps(obj) + "\n").encode("utf-8"),
                    "application/json; charset=utf-8", extra)
 
+    def _cookie_name(self) -> str:
+        # Cookies ignore the port, so every sheet served on localhost shares one jar;
+        # an unkeyed name lets the last sheet opened 403 every other sheet's images.
+        return f"sheet_token_{self.server.server_address[1]}"
+
     def _authed(self, query: dict) -> bool:
         """Token via query, header or cookie.
 
@@ -510,7 +515,7 @@ class Handler(BaseHTTPRequestHandler):
             return True
         supplied = (query.get("t", [None])[0]
                     or self.headers.get("X-Sheet-Token")
-                    or _cookie(self.headers.get("Cookie", "")).get("sheet_token"))
+                    or _cookie(self.headers.get("Cookie", "")).get(self._cookie_name()))
         return bool(supplied) and secrets.compare_digest(str(supplied), Ctx.token)
 
     # ---- routes
@@ -527,7 +532,7 @@ class Handler(BaseHTTPRequestHandler):
 
         cookie = {}
         if query.get("t"):
-            cookie = {"Set-Cookie": f"sheet_token={Ctx.token}; Path=/; SameSite=Strict"}
+            cookie = {"Set-Cookie": f"{self._cookie_name()}={Ctx.token}; Path=/; SameSite=Strict"}
 
         if path in ("/", "/index.html", "/sheet.html"):
             try:
