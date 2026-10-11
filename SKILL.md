@@ -48,7 +48,7 @@ dropped one every time. That is why the chrome is no longer yours to author, and
 
 ⛔ **Hard gate: `check_sheet.py` must exit 0 before you hand the sheet over.** Every FAIL it
 reports is a defect a real person hit and complained about. `assets/test_check_sheet.py`
-proves the gate bites — 20 historical defects caught, plus one valid sheet that must NOT
+proves the gate bites — 22 historical defects caught, plus two valid sheets that must NOT
 fail.
 
 Details: **`references/chrome-and-layout.md`** (what the chrome must do and why),
@@ -83,6 +83,33 @@ overrule you. Owner, on being handed a pre-filled sheet: *"I'll just review."*
   before serving a whole batch, and print the SOURCE of every measured value on the row** — a
   size, count or field that a reader cannot tell was measured from a fallback is a claim, not
   a measurement.
+
+### 1b. Things with a real size — show them AT that size
+
+When the items have a physical or rendered size — game sprites (cells/tiles), map tiles, printed
+or machined parts (mm), UI elements (px) — a 64 px thumbnail hides exactly what the reviewer must
+judge: whether resolution and proportions hold up at the size the thing is really seen. So show
+each one **at true scale, beside a reference figure of known size, on its real background**, and
+print the size and its source. Never only a thumbnail.
+
+The template does it from one row field; nothing else to build:
+
+```json
+"trueSize": {"w": 1.5, "h": 1.5, "unit": "cell", "source": "where the size was measured",
+             "pxPerUnit": 64, "bg": "#5d4c3e", "img": "optional (default: the thumb)",
+             "ref": {"label": "person", "w": 1, "h": 1.8, "img": "optional"}}
+```
+
+or `"trueSize": {"none": "why this row has no real size"}`. Set `CONFIG.trueSize: "required"`
+whenever the sheet's pictures have real sizes: `check_sheet.py` then FAILs any picture row without
+an entry, and always FAILs an entry missing w, h, unit or source. Subject and reference shrink
+together when tall (and say so), so the comparison stays true.
+
+### Overlays
+
+A project may layer its own `<domain>-review-sheets` skill on top of this one, with its own
+builders and stricter gates (for example, pre-rendered scale panels measured from its own data).
+Where an overlay is stricter, it wins; this skill stays domain-free.
 
 ## 2. 🔑 Say what each entry DOES, not what it is
 
@@ -436,6 +463,8 @@ Do not tell the human the sheet is ready until every line is true.
 
 - [ ] `check_sheet.py` exits **0**. Not "only warnings I judged acceptable" — 0 FAILs.
 - [ ] Every row is pre-filled, or deliberately undecided with a note saying why.
+- [ ] If the pictures have a real size, every picture row carries `trueSize` and
+      `CONFIG.trueSize` is `"required"` (§1b).
 - [ ] `CONFIG.invented` is set — to a real list, or to `[]` on purpose.
 - [ ] `CONFIG.criterion` names what you actually sorted by, including what it cannot rank.
 - [ ] Posture is in the page **and** in the decisions file.

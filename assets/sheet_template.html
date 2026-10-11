@@ -133,6 +133,16 @@ body.perf .row{content-visibility:auto;contain-intrinsic-size:auto var(--rowh)}
 .marks{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
 .mark{font-size:10.5px;border-radius:3px;padding:1px 6px;border:1px solid}
 .mark.inferred{color:var(--warn);border-color:#5a4320;background:#1a1408}
+/* true size: the picture AT its real display size beside a reference of known size, on its real background */
+.tsize{display:flex;align-items:flex-end;gap:14px;padding:6px 8px 2px;border-radius:5px;margin-top:5px;
+  width:max-content;max-width:100%;overflow-x:auto;border:1px solid var(--line)}
+.tsize figure{margin:0;display:flex;flex-direction:column;align-items:center;flex:none}
+.tsize figcaption{font-size:10.5px;color:#e8e2d4;text-shadow:0 0 3px #000;margin-top:2px}
+.tsbox{flex:none}
+.tsbox img{width:100%;height:100%;object-fit:fill;display:block}
+.tsbox.noimg{border:1px dashed #e8e2d4;box-sizing:border-box}
+.tssrc{font-size:10.5px;color:#8b95a3;margin-top:2px}
+.tssrc.none{color:var(--warn)}
 .mark.contested{color:#e8a0d8;border-color:#5a2b52;background:#1a0d17}
 .mark.absent{color:var(--dim);border-color:var(--line)}
 .mark.ovr{color:var(--accent);border-color:#5a4320;background:#1a1408}
@@ -210,6 +220,7 @@ body.grid .row.sel-tint{border-color:currentColor}
   ],
   "groupLabel": "group",
   "media": false,
+  "trueSize": "optional",
   "decisionsFile": "decisions.json",
   "decisionsPath": "",
   "sheetPath": ""
@@ -633,6 +644,29 @@ function defaultBody(it) {
        + (marks.length ? `<div class="marks">${marks.join('')}</div>` : '');
 }
 
+/* TRUE SIZE (row field `trueSize`, CONFIG.trueSize "required"|"optional"). When a subject has a real display size — a
+   game sprite in cells, a printed part in mm, a map tile, a UI element in px — a thumbnail alone hides whether its
+   resolution and proportions hold up. Show it AT that size, beside a reference figure of known size, on its real
+   background:
+     "trueSize": {"w": 1.5, "h": 1.5, "unit": "cell", "source": "where the size was measured",
+                  "pxPerUnit": 64, "bg": "#5d4c3e", "img": "optional (default: thumb)",
+                  "ref": {"label": "person", "w": 1, "h": 1.8, "img": "optional"}}
+   or {"none": "why this row has no real size"}. Subject and reference shrink TOGETHER past 220 px tall (labelled),
+   so the comparison stays true. check_sheet.py validates every entry, and FAILs a missing one under "required". */
+function trueSizeBlock(it) {
+  const t = it.trueSize; if (!t) return '';
+  if (t.none) return `<div class="tssrc none">no real size: ${esc(t.none)}</div>`;
+  const ppu = +(t.pxPerUnit || CFG.trueSizePxPerUnit || 64), r = t.ref || null;
+  const tall = Math.max(t.h * ppu, r ? r.h * ppu : 0), k = tall > 220 ? 220 / tall : 1;
+  const fig = (src, w, h, lab) => `<figure><div class="tsbox${src ? '' : ' noimg'}" style="width:${Math.round(w * ppu * k)}px;height:${Math.round(h * ppu * k)}px">`
+    + (src ? `<img src="${esc(src)}" alt="" loading="lazy">` : '') + `</div><figcaption>${esc(lab)}</figcaption></figure>`;
+  const num = x => (+x).toFixed(2).replace(/\.?0+$/, '');
+  return `<div class="tsize" style="background:${esc(t.bg || '#3a3632')}">`
+    + (r ? fig(r.img, r.w, r.h, `${r.label || 'reference'} ${num(r.w)}×${num(r.h)}`) : '')
+    + fig(t.img || it.thumb, t.w, t.h, `this ${num(t.w)}×${num(t.h)} ${t.unit || ''}`) + `</div>`
+    + `<div class="tssrc">true size · ${num(ppu * k)} px per ${esc(t.unit || 'unit')}${k < 1 ? ` (shrunk to ${Math.round(k * 100)}% with its reference, to fit)` : ''} · ${esc(t.source || 'NO SOURCE')}</div>`;
+}
+
 function card(it) {
   const d = decOf(it.id), key = d && d.decision ? d.decision : '';
   const o = OPTBY[key];
@@ -652,7 +686,7 @@ function card(it) {
     <div class="main">
       <div class="label">${esc(it.label || it.id)}<span class="id">${esc(it.id)}</span>
         ${ovr ? `<span class="mark ovr" title="you overruled the pre-fill, which said ${esc(d.prefill)}">⟲ was ${esc(d.prefill)}</span>` : ''}</div>
-      ${body}
+      ${body}${trueSizeBlock(it)}
     </div>
     <div class="ctrl">
       <div class="opts">${opts}</div>

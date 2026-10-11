@@ -153,6 +153,10 @@ def build() -> tuple[list[dict], dict]:
                       f" · fill {fill:.2f} — measured score {score:,.0f}",
             "meta": {"px": f"{size}×{size}"},
             "prefill": prefill, "contested": contested,
+            # a sprite has a real size on screen: show it at that size beside a person of known height
+            "trueSize": {"w": 1, "h": 1, "unit": "tile", "pxPerUnit": 64, "bg": "#4a4238",
+                         "source": "demo: every sprite occupies one 64 px tile in this imaginary game",
+                         "ref": {"label": "person", "w": 0.6, "h": 1.7}},
         })
 
     # ── text defs: judged by their consequence line
@@ -224,6 +228,7 @@ CONFIG = {
     ],
     "groupLabel": "pack",
     "media": True,
+    "trueSize": "optional",
     "decisionsFile": "decisions.json",
 }
 

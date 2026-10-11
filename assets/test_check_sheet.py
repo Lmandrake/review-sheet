@@ -130,6 +130,17 @@ CASES = [
      lambda h: set_config(h, lambda c: {**c, "options": [{**o, "hotkey": "1"} for o in c["options"]]}),
      "decision hotkeys are unique"),
 
+    # true size is required, and a row with a picture has none — it would be judged as a thumbnail
+    ("true size required but a picture row lacks it",
+     lambda h: set_items(set_config(h, lambda c: {**c, "trueSize": "required"}),
+                         lambda its: [{k: v for k, v in i.items() if k != "trueSize"} for i in its]),
+     "rows with a real size show it at true scale"),
+
+    # a size is a measurement: an entry with no source is a guess wearing a number
+    ("true-size entry has no source",
+     lambda h: set_items(h, lambda its: [{**i, "trueSize": {"w": 1, "h": 1, "unit": "cell"}} for i in its]),
+     "true-size entries carry size, unit and source"),
+
     ("no decisions file discoverable and none passed to the checker",
      lambda h: set_config(h, drop_config_key("decisionsFile")),
      "a decisions file exists to review"),
@@ -139,6 +150,13 @@ CASES = [
 # Mutations that change NOTHING a human would care about. A gate that FAILs these is
 # worse than a lax one: five phantom FAILs on a valid sheet teach an agent to ignore it.
 TOLERATED = [
+    ("true size required and every row carries one (or says why not)",
+     lambda h: set_items(set_config(h, lambda c: {**c, "trueSize": "required"}),
+                         lambda its: [{**i, "trueSize": ({"w": 1.5, "h": 1.5, "unit": "cell", "source": "test",
+                                                          "ref": {"label": "person", "w": 1, "h": 1.8}}
+                                                         if n % 2 else {"none": "a UI icon"})}
+                                      for n, i in enumerate(its)])),
+
     ("JSON block attributes in the other order",
      lambda h: h.replace('<script id="CONFIG" type="application/json">',
                          '<script type="application/json" id="CONFIG">')

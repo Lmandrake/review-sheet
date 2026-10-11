@@ -254,6 +254,40 @@ def check(path: str, decisions_path: str | None) -> list[tuple[str, str, str]]:
                 f"inline them as data: URIs); these are opened from disk, often offline"
                 if remote else "")
 
+    # ── 6a. true size: a picture with a real display size is shown AT that size ─────────
+    # A thumbnail hides whether a sprite's resolution and proportions hold up; reviewers kept
+    # judging game art at 64 px and asking "how big is this really?". Every trueSize entry must
+    # carry a size, a unit and the SOURCE of the size (a size is a measurement); under
+    # CONFIG.trueSize "required", every row with a picture must carry one (or {"none": why}).
+    if isinstance(items, list) and items:
+        def _num(x):
+            return isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0
+        bad_ts = []
+        for it in items:
+            t = it.get("trueSize")
+            if t is None:
+                continue
+            if not isinstance(t, dict):
+                bad_ts.append(f"{it.get('id')}: not an object")
+            elif t.get("none"):
+                if not str(t["none"]).strip():
+                    bad_ts.append(f"{it.get('id')}: 'none' gives no reason")
+            elif not (_num(t.get("w")) and _num(t.get("h")) and str(t.get("unit") or "").strip()
+                      and str(t.get("source") or "").strip()):
+                bad_ts.append(f"{it.get('id')}: needs w, h > 0, unit and source")
+            elif t.get("ref") is not None and not (isinstance(t["ref"], dict) and _num(t["ref"].get("w"))
+                                                   and _num(t["ref"].get("h"))):
+                bad_ts.append(f"{it.get('id')}: ref needs w, h > 0")
+        if any(it.get("trueSize") is not None for it in items) or (cfg or {}).get("trueSize") == "required":
+            add(FAIL if bad_ts else OK, "true-size entries carry size, unit and source",
+                f"{len(bad_ts)} bad, e.g. {bad_ts[:3]}" if bad_ts else "")
+        if (cfg or {}).get("trueSize") == "required":
+            lacking = [it.get("id") for it in items if (it.get("thumb") or it.get("trueSize") is not None)
+                       and it.get("trueSize") is None]
+            add(FAIL if lacking else OK, "rows with a real size show it at true scale",
+                f"{len(lacking)} row(s) with a picture but no trueSize (CONFIG.trueSize is required): {lacking[:5]}"
+                if lacking else "")
+
     # ── 6b. a decisions file is actually there to review ──────────────────────────────
     # check() used to pass clean whenever it was simply never HANDED a --decisions path —
     # a sheet whose pre-fill generator never ran, or whose file lives somewhere else,
