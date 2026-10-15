@@ -68,3 +68,5 @@ Per-project discovery is the same symlink under that project's `.claude/skills/`
 
 A blank sheet is a chore you handed back; a pre-filled one is a decision the
 human only has to disagree with.
+
+> Moved to MandrakeWorkflows/skills/review-sheets on 2026-10-15 (github.com/Lmandrake/MandrakeWorkflows). This repo is archived.
